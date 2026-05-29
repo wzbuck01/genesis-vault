@@ -4,36 +4,58 @@ Encrypted Genesis credential vault — AES-256-GCM, PBKDF2-SHA512, passphrase pr
 
 ## Cold Session Bootstrap
 
-Nothing installed except `gcc` and OpenSSL? One command:
+### Option A — Binary (preferred)
+
+Pull the pre-built binary and validate its hash before executing.
+Hash mismatch means drift or tampering — fall back to Option B.
 
 ```bash
-curl -sL https://raw.githubusercontent.com/wzbuck01/genesis-vault/main/vault-decrypt.c \
-  | gcc -O2 -x c - -lssl -lcrypto -o vault-decrypt
+BASE=https://raw.githubusercontent.com/wzbuck01/genesis-vault/main
+curl -sLO $BASE/vault-decrypt
+curl -sLO $BASE/vault-decrypt.sha256
+sha256sum -c vault-decrypt.sha256          # must print: vault-decrypt: OK
+chmod +x vault-decrypt
 
 VAULT_PASSPHRASE=<passphrase> ./vault-decrypt --env > .env && . .env
 ```
 
-Then proceed with session-start:
+Expected hash: `3d1698f581db52986196a335e0fe38174813349fd7b7458a9d72409f1cdcedd1`
+
+Platform: Linux x86_64, dynamically linked (glibc 2.39+, OpenSSL 3.x).
+Matches the claude.ai bash_tool container environment exactly.
+
+### Option B — Compile from source
+
+If the binary hash fails, or you need a different platform:
 
 ```bash
-VAULT_PASSPHRASE=<passphrase> ./vault-decrypt ZAC_TOKEN   # get one key
-VAULT_PASSPHRASE=<passphrase> ./vault-decrypt --list      # list all keys
-VAULT_PASSPHRASE=<passphrase> ./vault-decrypt --env       # export all
+curl -sL https://raw.githubusercontent.com/wzbuck01/genesis-vault/main/vault-decrypt.c \
+  | gcc -O2 -x c - -lssl -lcrypto -o vault-decrypt
+VAULT_PASSPHRASE=<passphrase> ./vault-decrypt --env > .env && . .env
 ```
 
-## vault-decrypt.c
+Requires: `gcc`, `libssl-dev` (OpenSSL headers).
 
-Self-contained C tool. No Node.js, no pre-existing credentials.
+## Usage
 
-- Fetches `vault.json` from this public repo (no token required)
-- Falls back to monorepo vault via `ZAC_TOKEN` if set
-- Falls back to ESB vault via `VAULT_FETCH_CREDENTIAL` if set
-- Decrypts AES-256-GCM entries with PBKDF2-SHA512 (210k rounds)
-- Proxy intentionally not honoured — key material transport security
+```bash
+VAULT_PASSPHRASE=<pp> ./vault-decrypt ZAC_TOKEN       # single key -> stdout
+VAULT_PASSPHRASE=<pp> ./vault-decrypt --list          # list key names
+VAULT_PASSPHRASE=<pp> ./vault-decrypt --all           # all key=val pairs
+VAULT_PASSPHRASE=<pp> ./vault-decrypt --env           # export KEY='val' lines
+```
 
-Build deps: `gcc`, `libssl-dev` (OpenSSL)
+## Files
 
-## vault.json
+| File | Purpose |
+|------|---------|
+| `vault.json` | Encrypted vault entries |
+| `vault-decrypt` | Pre-built binary (Linux x86_64) |
+| `vault-decrypt.sha256` | Binary hash manifest — validate before running |
+| `vault-decrypt.c` | Source — compile if binary hash fails or wrong platform |
 
-AES-256-GCM encrypted entries. Token format: `P⟨<base64url>⟩`
-Salt: `pv-vault-v1:<key_name>` — key-specific, prevents cross-entry attacks.
+## vault.json format
+
+Token format: `P⟨<base64url>⟩`
+Crypto: AES-256-GCM, key derived via PBKDF2-SHA512 (210k rounds)
+Salt: `pv-vault-v1:<key_name>` — key-specific, prevents cross-entry attacks
