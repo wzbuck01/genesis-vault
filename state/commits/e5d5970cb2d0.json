@@ -1,0 +1,5 @@
+{
+  "entry": "e5d5970cb2d0: vault-decrypt: remove OpenSSL dep, use zero-dep crypto (sha512+aes256gcm)\n\nPort to popen(curl) transport + hand-rolled b64 + pbkdf2_sha512/aes256gcm_decrypt.\nNew build: gcc -O2 -D_POSIX_C_SOURCE=200809L vault-decrypt.c sha512.c aes256gcm.c -o vault-decrypt\nCDT: 2026-06-17 10:00 AM CDT",
+  "sha": "e5d5970cb2d0",
+  "added_at": "2026-06-17T21:10:16.836Z"
+}
