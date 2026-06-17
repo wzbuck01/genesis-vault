@@ -1,0 +1,5 @@
+{
+  "entry": "b396c7b7243a: vault-decrypt: update precompiled binary (no OpenSSL, zero-dep crypto)",
+  "sha": "b396c7b7243a",
+  "added_at": "2026-06-17T21:11:34.348Z"
+}
