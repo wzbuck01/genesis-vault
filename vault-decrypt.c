@@ -21,8 +21,19 @@
  *
  * Vault tiers attempted in order:
  *   1. Public genesis-vault (no token required)  -- always attempted first
- *   2. ZAC_TOKEN -> monorepo vault               -- if ZAC_TOKEN in env
- *   3. VAULT_FETCH_CREDENTIAL -> ESB vault       -- if VFC in env
+ *   2. ZAC_TOKEN -> monorepo vault               -- canonical source; if ZAC_TOKEN in env
+ *   3. VAULT_FETCH_CREDENTIAL -> ESB vault       -- fallback when ZAC dead; if VFC in env
+ *   4. Stale local cache                         -- $VAULT_CDN_PATH/vault/vault.json
+ *                                                   or $HOME/.genesis/vault.json
+ *
+ * Cache: encrypted vault.json written to disk on every successful network load.
+ * Requires VAULT_PASSPHRASE to decrypt — safe to persist.
+ *
+ * Intentional gaps vs Node vault.mjs:
+ *   - No Anthropic Files API tier (no inference context in cold bootstrap)
+ *   - No write path (read-only bootstrap tool by design)
+ *   - No proxy support (key material must not route through untrusted intermediary)
+ *     Node vault.mjs allows proxy for credentialed tiers (operability trade-off).
  *
  * (c) 2026 Brandon Clark / Primevelocity. All Rights Reserved.
  */
@@ -47,7 +58,8 @@
 #define TAG_LEN        16
 #define NONCE_LEN      12
 #define MAX_VAULT      (1024 * 1024)
-#define MAX_ENTRIES    64
+#define MAX_ENTRIES    128          /* raised from 64 — warn at 96 */
+#define MAX_ENTRIES_WARN 96         /* emit stderr warning approaching limit */
 #define MAX_KEY        128
 #define MAX_VAL        (64 * 1024)
 
@@ -346,6 +358,9 @@ static int walk_vault(const char *src, const char *passphrase) {
                         g_entries[g_count].val = v;
                         g_count++;
                         count++;
+                        if (g_count == MAX_ENTRIES_WARN)
+                            fprintf(stderr, "[vault-decrypt] WARNING: %d entries loaded — approaching limit of %d; consider bumping MAX_ENTRIES\n",
+                                    g_count, MAX_ENTRIES);
                     }
                 }
                 free(tokbuf);
@@ -359,7 +374,56 @@ static int walk_vault(const char *src, const char *passphrase) {
     return count;
 }
 
-/* ── Load vault from all available tiers ─────────────────────────────────── */
+/* ── Local vault cache path ───────────────────────────────────────────────── */
+/*
+ * Returns a malloc'd path string (caller must free) or NULL.
+ * Prefers $VAULT_CDN_PATH/vault/vault.json; falls back to $HOME/.genesis/vault.json.
+ * Cache stores the encrypted vault.json bytes (not plaintext) — still requires
+ * VAULT_PASSPHRASE to decrypt. Safe to persist.
+ */
+static char *cache_path(void) {
+    const char *cdp = getenv("VAULT_CDN_PATH");
+    char *buf = malloc(1024);
+    if (!buf) return NULL;
+    if (cdp && cdp[0])
+        snprintf(buf, 1024, "%s/vault/vault.json", cdp);
+    else {
+        const char *home = getenv("HOME");
+        if (!home || !home[0]) { free(buf); return NULL; }
+        snprintf(buf, 1024, "%s/.genesis/vault.json", home);
+    }
+    return buf;
+}
+
+static void write_cache(const char *data, size_t len) {
+    char *cp = cache_path();
+    if (!cp) return;
+    /* mkdir -p the parent directory */
+    char dir[1024]; snprintf(dir, sizeof(dir), "%s", cp);
+    char *slash = strrchr(dir, '/');
+    if (slash) {
+        *slash = '\0';
+        /* Best-effort mkdir; ignore return (already exists is fine) */
+        char cmd[1100]; snprintf(cmd, sizeof(cmd), "mkdir -p '%s' 2>/dev/null", dir);
+        int _r = system(cmd); (void)_r;
+    }
+    FILE *f = fopen(cp, "w");
+    if (f) { fwrite(data, 1, len, f); fclose(f); }
+    free(cp);
+}
+
+static int read_cache(buf_t *out) {
+    char *cp = cache_path();
+    if (!cp) return -1;
+    FILE *f = fopen(cp, "r");
+    if (!f) { free(cp); return -1; }
+    char rbuf[8192]; int n;
+    while ((n = (int)fread(rbuf, 1, sizeof(rbuf), f)) > 0)
+        buf_append(out, rbuf, (size_t)n);
+    fclose(f); free(cp);
+    return out->len > 0 ? 0 : -1;
+}
+
 
 static int load_vault(const char *passphrase) {
     const char *zac = getenv("ZAC_TOKEN");
@@ -373,7 +437,7 @@ static int load_vault(const char *passphrase) {
     fprintf(stderr, "[vault-decrypt] trying public vault...\n");
     ok = (https_get(VAULT_URL_PUBLIC, NULL, NULL, &buf) == 0);
     if (!ok) {
-        /* Tier 2: monorepo via ZAC (if available) */
+        /* Tier 2: monorepo via ZAC — canonical source (matches Node Tier 2) */
         if (zac && zac[0]) {
             fprintf(stderr, "[vault-decrypt] trying monorepo vault (ZAC)...\n");
             buf.len = 0;
@@ -382,13 +446,21 @@ static int load_vault(const char *passphrase) {
         }
     }
     if (!ok) {
-        /* Tier 3: ESB via VFC (if available) */
+        /* Tier 3: ESB via VFC — fallback when ZAC dead (matches Node Tier 3) */
         if (vfc && vfc[0]) {
             fprintf(stderr, "[vault-decrypt] trying ESB vault (VFC)...\n");
             buf.len = 0;
             ok = (https_get(VAULT_URL_ESB, vfc,
                             "application/vnd.github.raw+json", &buf) == 0);
         }
+    }
+    if (!ok) {
+        /* Tier 4: stale local cache — encrypted vault.json; still needs passphrase.
+         * Written by vault-decrypt on every successful network load. */
+        fprintf(stderr, "[vault-decrypt] network tiers exhausted — trying stale cache...\n");
+        buf.len = 0;
+        ok = (read_cache(&buf) == 0);
+        if (ok) fprintf(stderr, "[vault-decrypt] loaded from stale local cache\n");
     }
 
     if (!ok || buf.len == 0) {
@@ -398,6 +470,10 @@ static int load_vault(const char *passphrase) {
 
     fprintf(stderr, "[vault-decrypt] fetched %zu bytes, decrypting...\n", buf.len);
     int n = walk_vault(buf.data, passphrase);
+
+    /* Cache the encrypted bytes on every successful network load */
+    if (n > 0) write_cache(buf.data, buf.len);
+
     free(buf.data);
 
     if (n == 0) {
