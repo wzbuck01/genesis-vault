@@ -1,14 +1,1 @@
-# genesis vault-decrypt binary manifest
-# Verify before executing: sha256sum -c vault-decrypt.sha256
-#
-# Platform:  Linux x86_64
-# Linked:    dynamic (requires glibc + OpenSSL 3.x)
-# OpenSSL:   OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
-# libc:      ldd (Ubuntu GLIBC 2.39-0ubuntu8.7) 2.39
-# Built:     2026-05-29T22:46:30Z
-# Container: Ubuntu 24 (claude.ai bash_tool environment)
-#
-# If hash fails: recompile from vault-decrypt.c
-#   gcc -O2 vault-decrypt.c -lssl -lcrypto -o vault-decrypt
-#
-3d1698f581db52986196a335e0fe38174813349fd7b7458a9d72409f1cdcedd1  vault-decrypt
+043c5acd4a2ee33a3fc8bde724b2efde17251b7146b5110e0c791eae843fb48b  vault-decrypt
