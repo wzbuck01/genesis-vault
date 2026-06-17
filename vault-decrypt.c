@@ -1,22 +1,27 @@
 /*
  * vault-decrypt.c — Genesis vault bootstrap tool
  *
- * Self-contained. No Node.js. No ZAC_TOKEN. Just gcc + OpenSSL.
+ * Self-contained. No Node.js. No OpenSSL. Just gcc + curl.
  *
  * Fetches vault.json from the public genesis-vault repo, decrypts
  * entries with AES-256-GCM + PBKDF2-SHA512, and prints values to stdout.
  *
  * Build:
- *   gcc -O2 vault-decrypt.c -lssl -lcrypto -o vault-decrypt
+ *   gcc -O2 -D_POSIX_C_SOURCE=200809L vault-decrypt.c sha512.c aes256gcm.c -o vault-decrypt
+ *
+ * Runtime dependency: curl in PATH (for vault fetch). No OpenSSL.
  *
  * Usage:
  *   VAULT_PASSPHRASE=<passphrase> ./vault-decrypt <KEY>
  *   VAULT_PASSPHRASE=<passphrase> ./vault-decrypt --all
  *   VAULT_PASSPHRASE=<passphrase> ./vault-decrypt --env   # export KEY=val lines
+ *   VAULT_PASSPHRASE=<passphrase> ./vault-decrypt --list  # key names only
  *
- * One-liner bootstrap (cold session, nothing present):
- *   curl -sL https://raw.githubusercontent.com/wzbuck01/genesis-vault/main/vault-decrypt.c \
- *     | gcc -O2 -x c - -lssl -lcrypto -o vault-decrypt
+ * Multi-file bootstrap (cold session):
+ *   for f in vault-decrypt.c sha512.c sha512.h aes256gcm.c aes256gcm.h genesis_secure.h; do
+ *     curl -fsSL https://raw.githubusercontent.com/wzbuck01/genesis-vault/main/$f -o $f
+ *   done
+ *   gcc -O2 -D_POSIX_C_SOURCE=200809L vault-decrypt.c sha512.c aes256gcm.c -o vault-decrypt
  *   VAULT_PASSPHRASE=<passphrase> ./vault-decrypt --env > .env && . .env
  *
  * Vault tiers attempted in order:
@@ -25,6 +30,11 @@
  *   3. VAULT_FETCH_CREDENTIAL -> ESB vault       -- fallback when ZAC dead; if VFC in env
  *   4. Stale local cache                         -- $VAULT_CDN_PATH/vault/vault.json
  *                                                   or $HOME/.genesis/vault.json
+ *
+ * Transport policy:
+ *   Vault fetches MUST NOT honor HTTPS_PROXY.
+ *   curl --noproxy '*' enforces this unconditionally.
+ *   Key material must not route through an untrusted intermediary.
  *
  * Cache: encrypted vault.json written to disk on every successful network load.
  * Requires VAULT_PASSPHRASE to decrypt — safe to persist.
@@ -35,17 +45,18 @@
  *   - No proxy support (key material must not route through untrusted intermediary)
  *     Node vault.mjs allows proxy for credentialed tiers (operability trade-off).
  *
- * (c) 2026 Brandon Clark / Primevelocity. All Rights Reserved.
+ * (c) 2026 Brandon Clark / Genesis Systems. All Rights Reserved.
  */
+
+#include "sha512.h"
+#include "aes256gcm.h"
+#include "genesis_secure.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
-#include <openssl/bio.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 
@@ -59,7 +70,7 @@
 #define NONCE_LEN      12
 #define MAX_VAULT      (1024 * 1024)
 #define MAX_ENTRIES    128          /* raised from 64 — warn at 96 */
-#define MAX_ENTRIES_WARN 96         /* emit stderr warning approaching limit */
+#define MAX_ENTRIES_WARN 96
 #define MAX_KEY        128
 #define MAX_VAL        (64 * 1024)
 
@@ -86,136 +97,159 @@ static int buf_append(buf_t *b, const char *d, size_t n) {
     return 0;
 }
 
-/* ── HTTPS GET via OpenSSL BIO (no libcurl, no proxy) ────────────────────── */
+/* ── Shell argument safety check ─────────────────────────────────────────── */
 /*
- * Proxy is intentionally not honoured here. Key material must not route
- * through an untrusted intermediary. See transport policy in seed_vault.h.
+ * Restricts token and Accept header values to characters safe for
+ * single-quoted shell arguments (no single quotes, no backticks).
  */
+static int shell_safe(const char *s) {
+    if (!s) return 1;
+    for (; *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        if (!( (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+               (c >= '0' && c <= '9') ||
+                c == '_' || c == '-' || c == '.' || c == '/' ||
+                c == ':' || c == '+' || c == '=' || c == '@' ))
+            return 0;
+    }
+    return 1;
+}
 
+/* ── HTTPS GET via curl --noproxy '*' ────────────────────────────────────── */
+/*
+ * Replaces the OpenSSL BIO transport.
+ * --noproxy '*' is unconditional: vault fetches must not route through proxy.
+ * -w '\n%{http_code}' appends the HTTP status as the last line of output.
+ * Status is parsed and body is trimmed before returning.
+ */
 static int https_get(const char *url, const char *token,
                      const char *accept, buf_t *out) {
-    /* Parse URL */
-    char host[512] = {0}, path[1024] = {0};
-    int  port = 443;
-    const char *p = url;
-    if (strncmp(p, "https://", 8) == 0) p += 8;
-    const char *sl = strchr(p, '/');
-    size_t hl = sl ? (size_t)(sl - p) : strlen(p);
-    if (hl >= sizeof(host)) hl = sizeof(host) - 1;
-    memcpy(host, p, hl); host[hl] = '\0';
-    char *colon = strchr(host, ':');
-    if (colon) { port = atoi(colon + 1); *colon = '\0'; }
-    strncpy(path, sl ? sl : "/", sizeof(path) - 1);
+    if (!shell_safe(token))  { fprintf(stderr, "[vault-decrypt] unsafe token\n");  return -1; }
+    if (!shell_safe(accept)) { fprintf(stderr, "[vault-decrypt] unsafe accept\n"); return -1; }
 
-    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
-    if (!ctx) return -1;
-    SSL_CTX_set_default_verify_paths(ctx);
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-
-    BIO *bio = BIO_new_ssl_connect(ctx);
-    if (!bio) { SSL_CTX_free(ctx); return -1; }
-    SSL *ssl = NULL; BIO_get_ssl(bio, &ssl);
-    SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
-    SSL_set_tlsext_host_name(ssl, host);
-
-    char addr[600]; snprintf(addr, sizeof(addr), "%s:%d", host, port);
-    BIO_set_conn_hostname(bio, addr);
-
-    if (BIO_do_connect(bio) <= 0 || BIO_do_handshake(bio) <= 0) {
-        ERR_clear_error();
-        BIO_free_all(bio); SSL_CTX_free(ctx);
-        return -1;
+    char cmd[2048];
+    int n;
+    if (token && token[0] && accept && accept[0]) {
+        n = snprintf(cmd, sizeof(cmd),
+            "curl -s --noproxy '*' --max-time 30 "
+            "-H 'Authorization: token %s' "
+            "-H 'Accept: %s' "
+            "-H 'User-Agent: genesis/vault-decrypt' "
+            "-w '\\n%%{http_code}' '%s' 2>/dev/null",
+            token, accept, url);
+    } else if (token && token[0]) {
+        n = snprintf(cmd, sizeof(cmd),
+            "curl -s --noproxy '*' --max-time 30 "
+            "-H 'Authorization: token %s' "
+            "-H 'User-Agent: genesis/vault-decrypt' "
+            "-w '\\n%%{http_code}' '%s' 2>/dev/null",
+            token, url);
+    } else {
+        n = snprintf(cmd, sizeof(cmd),
+            "curl -s --noproxy '*' --max-time 30 "
+            "-H 'User-Agent: genesis/vault-decrypt' "
+            "-w '\\n%%{http_code}' '%s' 2>/dev/null",
+            url);
     }
+    if (n <= 0 || (size_t)n >= sizeof(cmd)) return -1;
 
-    char req[2048];
-    snprintf(req, sizeof(req),
-        "GET %s HTTP/1.1\r\nHost: %s\r\n"
-        "User-Agent: genesis/vault-decrypt\r\nConnection: close\r\n"
-        "%s%s%s"
-        "%s%s%s"
-        "\r\n",
-        path, host,
-        token  && token[0]  ? "Authorization: token " : "",
-        token  && token[0]  ? token  : "",
-        token  && token[0]  ? "\r\n" : "",
-        accept && accept[0] ? "Accept: "              : "",
-        accept && accept[0] ? accept : "",
-        accept && accept[0] ? "\r\n" : "");
-    BIO_write(bio, req, (int)strlen(req));
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return -1;
 
-    buf_t raw = { malloc(65536), 0, 65536 };
-    char rbuf[8192]; int n;
-    while ((n = BIO_read(bio, rbuf, sizeof(rbuf))) > 0)
-        buf_append(&raw, rbuf, (size_t)n);
-    BIO_free_all(bio); SSL_CTX_free(ctx);
+    buf_t raw = { malloc(131072), 0, 131072 };
+    if (!raw.data) { pclose(fp); return -1; }
+    char rbuf[8192]; size_t nr;
+    while ((nr = fread(rbuf, 1, sizeof(rbuf), fp)) > 0)
+        buf_append(&raw, rbuf, nr);
+    pclose(fp);
 
-    long code = 0;
-    sscanf(raw.data, "HTTP/%*s %ld", &code);
-    char *body = strstr(raw.data, "\r\n\r\n");
-    if (!body || code != 200) {
+    /* Last line is HTTP status appended by -w '\n%{http_code}' */
+    if (raw.len < 3) { free(raw.data); return -1; }
+    char *last_nl = raw.data + raw.len;
+    while (last_nl > raw.data && *last_nl != '\n') last_nl--;
+    long code = strtol(last_nl + 1, NULL, 10);
+    *last_nl = '\0';
+    raw.len = (size_t)(last_nl - raw.data);
+
+    if (code != 200) {
         fprintf(stderr, "[vault-decrypt] HTTP %ld from %s\n", code, url);
         free(raw.data); return -1;
     }
-    body += 4;
-    buf_append(out, body, raw.len - (size_t)(body - raw.data));
+
+    buf_append(out, raw.data, raw.len);
     free(raw.data);
     return 0;
 }
 
 /* ── Base64url decode ────────────────────────────────────────────────────── */
-
+/*
+ * Replaces the OpenSSL BIO base64 decoder.
+ * Handles both base64url ('-','_') and standard base64 ('+','/').
+ * Padding is optional.
+ */
 static int b64url_decode(const char *in, size_t inlen,
                          unsigned char *out, size_t *outlen) {
-    char *buf = malloc(inlen + 4); if (!buf) return -1;
+    static const unsigned char T[256] = {
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x3E,0xFF,0x3E,0xFF,0x3F,
+        0x34,0x35,0x36,0x37,0x38,0x39,0x3A,0x3B,0x3C,0x3D,0xFF,0xFF,0xFF,0x40,0xFF,0xFF,
+        0xFF,0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,
+        0x0F,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0xFF,0xFF,0xFF,0xFF,0x3F,
+        0xFF,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F,0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,
+        0x29,0x2A,0x2B,0x2C,0x2D,0x2E,0x2F,0x30,0x31,0x32,0x33,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+    };
+    size_t oi = 0;
+    uint32_t acc = 0;
+    int bits = 0;
     for (size_t i = 0; i < inlen; i++) {
-        char c = in[i];
-        if      (c == '-') c = '+';
-        else if (c == '_') c = '/';
-        buf[i] = c;
+        unsigned char c = (unsigned char)in[i];
+        unsigned char v = T[c];
+        if (v == 0xFF) return -1;
+        if (v == 0x40) break;   /* padding '=': stop */
+        acc  = (acc << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out[oi++] = (unsigned char)((acc >> bits) & 0xFF);
+        }
     }
-    size_t pad = inlen;
-    while (pad % 4) buf[pad++] = '=';
-    buf[pad] = '\0';
-
-    BIO *b64 = BIO_new(BIO_f_base64());
-    BIO *mem = BIO_new_mem_buf(buf, (int)pad);
-    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
-    b64 = BIO_push(b64, mem);
-    int r = BIO_read(b64, out, (int)pad);
-    BIO_free_all(b64); free(buf);
-    if (r < 0) return -1;
-    *outlen = (size_t)r;
+    *outlen = oi;
     return 0;
 }
 
 /* ── PBKDF2-SHA512 + AES-256-GCM decrypt ────────────────────────────────── */
-
+/*
+ * Replaces PKCS5_PBKDF2_HMAC + EVP_aes_256_gcm.
+ * Uses pbkdf2_sha512() from sha512.c and aes256gcm_decrypt() from aes256gcm.c.
+ */
 static int decrypt_entry(const char *passphrase, const char *label,
                          const char *b64token, char *plain, size_t *plen) {
-    /* strip P⟨ prefix and ⟩ suffix if present — handle both raw UTF-8 and
-     * JSON-escaped \\u27e8 / \\u27e9 forms */
+    /* Strip P⟨ prefix and ⟩ suffix (raw UTF-8 or JSON-escaped forms) */
     const char *b64 = b64token;
     size_t b64len   = strlen(b64token);
 
-    /* raw UTF-8: P + E2 9F A8 ... E2 9F A9 */
     if (b64len > 7 && b64[0] == 'P' &&
         (unsigned char)b64[1] == 0xE2 && (unsigned char)b64[2] == 0x9F &&
         (unsigned char)b64[3] == 0xA8) {
-        b64 += 4;
-        b64len -= 4;
-        /* strip trailing E2 9F A9 */
+        b64 += 4; b64len -= 4;
         if (b64len >= 3 &&
             (unsigned char)b64[b64len-3] == 0xE2 &&
             (unsigned char)b64[b64len-2] == 0x9F &&
             (unsigned char)b64[b64len-1] == 0xA9)
             b64len -= 3;
-    }
-    /* JSON-escaped: P\u27e8...\u27e9 */
-    else if (b64len > 13 && b64[0] == 'P' && b64[1] == '\\' &&
-             b64[2] == 'u' && b64[3] == '2' && b64[4] == '7' &&
-             b64[5] == 'e' && b64[6] == '8') {
-        b64 += 7;
-        b64len -= 7;
+    } else if (b64len > 13 && b64[0] == 'P' && b64[1] == '\\' &&
+               b64[2] == 'u' && b64[3] == '2' && b64[4] == '7' &&
+               b64[5] == 'e' && b64[6] == '8') {
+        b64 += 7; b64len -= 7;
         if (b64len >= 6 && b64[b64len-6] == '\\' &&
             b64[b64len-5] == 'u' && b64[b64len-4] == '2' &&
             b64[b64len-3] == '7' && b64[b64len-2] == 'e' &&
@@ -224,95 +258,54 @@ static int decrypt_entry(const char *passphrase, const char *label,
     }
 
     unsigned char blob[MAX_VAL + 64]; size_t blen = 0;
-    /* work on a NUL-terminated copy of the b64 slice */
-    char *b64copy = malloc(b64len + 1);
-    if (!b64copy) return -1;
-    memcpy(b64copy, b64, b64len); b64copy[b64len] = '\0';
-    int rc = b64url_decode(b64copy, b64len, blob, &blen);
-    free(b64copy);
-    if (rc != 0) return -1;
+    if (b64url_decode(b64, b64len, blob, &blen) != 0) return -1;
     if (blen < (size_t)(NONCE_LEN + TAG_LEN + 1)) return -1;
 
     char salt[256];
     snprintf(salt, sizeof(salt), "pv-vault-v1:%s", label);
     unsigned char key[KEY_LEN];
-    if (!PKCS5_PBKDF2_HMAC(passphrase, (int)strlen(passphrase),
-                            (unsigned char *)salt, (int)strlen(salt),
-                            PBKDF2_ROUNDS, EVP_sha512(), KEY_LEN, key))
-        return -1;
+    pbkdf2_sha512((const uint8_t *)passphrase, strlen(passphrase),
+                  (const uint8_t *)salt,       strlen(salt),
+                  PBKDF2_ROUNDS, key, KEY_LEN);
 
-    unsigned char *nonce  = blob;
-    unsigned char *ct     = blob + NONCE_LEN;
-    size_t         ct_len = blen - NONCE_LEN - TAG_LEN;
-    unsigned char *tag    = blob + blen - TAG_LEN;
+    const unsigned char *nonce  = blob;
+    const unsigned char *ct     = blob + NONCE_LEN;
+    size_t               ct_len = blen - NONCE_LEN - TAG_LEN;
+    const unsigned char *tag    = blob + blen - TAG_LEN;
 
-    EVP_CIPHER_CTX *dc = EVP_CIPHER_CTX_new(); if (!dc) return -1;
-    int ok = 0, l = 0, fl = 0;
-    ok  = EVP_DecryptInit_ex(dc, EVP_aes_256_gcm(), NULL, NULL, NULL);
-    ok &= EVP_CIPHER_CTX_ctrl(dc, EVP_CTRL_GCM_SET_IVLEN, NONCE_LEN, NULL);
-    ok &= EVP_DecryptInit_ex(dc, NULL, NULL, key, nonce);
-    ok &= EVP_DecryptUpdate(dc, (unsigned char *)plain, &l, ct, (int)ct_len);
-    ok &= EVP_CIPHER_CTX_ctrl(dc, EVP_CTRL_GCM_SET_TAG, TAG_LEN, tag);
-    ok &= EVP_DecryptFinal_ex(dc, (unsigned char *)plain + l, &fl);
-    EVP_CIPHER_CTX_free(dc);
-    if (!ok) return -1;
+    int rc = aes256gcm_decrypt(key, nonce, NONCE_LEN,
+                               ct, ct_len,
+                               NULL, 0,
+                               tag,
+                               (unsigned char *)plain);
 
-    *plen = (size_t)(l + fl);
-    plain[*plen] = '\0';
+    secure_zero(key,  sizeof(key));
+    secure_zero(blob, blen);
+    secure_zero(salt, sizeof(salt));
+
+    if (rc != 0) return -1;
+    *plen = ct_len;
+    plain[ct_len] = '\0';
     return 0;
 }
 
 /* ── JSON vault walker ───────────────────────────────────────────────────── */
 /*
- * Walks the vault JSON looking for sealed P⟨⟩ token values.
+ * Walks raw vault JSON looking for sealed P⟨⟩ token values.
  * Handles both raw UTF-8 and JSON-escaped \u27e8/\u27e9 bracket forms.
- * Tolerates the GitHub Contents API wrapper (base64-encoded "content" field)
- * and raw JSON (public raw.githubusercontent.com response).
+ *
+ * NOTE: GitHub Contents API wrapper (base64-encoded "content" field) is not
+ * handled here because all active vault tiers return raw JSON:
+ *   - Public tier: raw.githubusercontent.com returns raw bytes
+ *   - ZAC/VFC tiers: application/vnd.github.raw+json returns raw bytes
+ * The wrapper format is only returned by the default Contents API Accept
+ * header, which this tool never uses.
  */
-
 static int walk_vault(const char *src, const char *passphrase) {
     static char plain[MAX_VAL + 1];
     const char *p = src;
     int count = 0;
 
-    /* If this is a GitHub Contents API response, unwrap the base64 content */
-    const char *content_key = "\"content\":\"";
-    char *ck = strstr((char *)src, content_key);
-    if (ck) {
-        /* Extract and decode the base64 blob */
-        ck += strlen(content_key);
-        char *end = strchr(ck, '"');
-        if (end && end > ck) {
-            size_t raw_len = (size_t)(end - ck);
-            /* Remove embedded \n from GitHub's line-wrapped base64 */
-            char *clean = malloc(raw_len + 1);
-            if (!clean) return -1;
-            size_t cl = 0;
-            for (size_t i = 0; i < raw_len; i++)
-                if (ck[i] != '\\' && ck[i] != 'n') clean[cl++] = ck[i];
-                else if (ck[i] == 'n' && i > 0 && ck[i-1] == '\\') cl--;
-            clean[cl] = '\0';
-
-            /* Standard base64 (not base64url) — use OpenSSL BIO directly */
-            unsigned char *decoded = malloc(cl + 4);
-            if (!decoded) { free(clean); return -1; }
-            BIO *b64bio = BIO_new(BIO_f_base64());
-            BIO *membio = BIO_new_mem_buf(clean, (int)cl);
-            BIO_set_flags(b64bio, BIO_FLAGS_BASE64_NO_NL);
-            b64bio = BIO_push(b64bio, membio);
-            int dlen = BIO_read(b64bio, decoded, (int)cl);
-            BIO_free_all(b64bio); free(clean);
-            if (dlen > 0) {
-                decoded[dlen] = '\0';
-                count = walk_vault((char *)decoded, passphrase);
-                free(decoded);
-                return count;
-            }
-            free(decoded);
-        }
-    }
-
-    /* Walk raw vault JSON */
     while (*p && g_count < MAX_ENTRIES) {
         if (*p != '"') { p++; continue; }
         p++;
@@ -339,7 +332,6 @@ static int walk_vault(const char *src, const char *passphrase) {
             sealed = 1;
 
         if (sealed) {
-            /* Find the end of this JSON string value */
             const char *tok_start = p;
             const char *scan = p;
             while (*scan && *scan != '"') scan++;
@@ -359,7 +351,8 @@ static int walk_vault(const char *src, const char *passphrase) {
                         g_count++;
                         count++;
                         if (g_count == MAX_ENTRIES_WARN)
-                            fprintf(stderr, "[vault-decrypt] WARNING: %d entries loaded — approaching limit of %d; consider bumping MAX_ENTRIES\n",
+                            fprintf(stderr, "[vault-decrypt] WARNING: %d entries loaded"
+                                    " — approaching limit of %d; consider bumping MAX_ENTRIES\n",
                                     g_count, MAX_ENTRIES);
                     }
                 }
@@ -374,13 +367,8 @@ static int walk_vault(const char *src, const char *passphrase) {
     return count;
 }
 
-/* ── Local vault cache path ───────────────────────────────────────────────── */
-/*
- * Returns a malloc'd path string (caller must free) or NULL.
- * Prefers $VAULT_CDN_PATH/vault/vault.json; falls back to $HOME/.genesis/vault.json.
- * Cache stores the encrypted vault.json bytes (not plaintext) — still requires
- * VAULT_PASSPHRASE to decrypt. Safe to persist.
- */
+/* ── Local vault cache ───────────────────────────────────────────────────── */
+
 static char *cache_path(void) {
     const char *cdp = getenv("VAULT_CDN_PATH");
     char *buf = malloc(1024);
@@ -398,12 +386,10 @@ static char *cache_path(void) {
 static void write_cache(const char *data, size_t len) {
     char *cp = cache_path();
     if (!cp) return;
-    /* mkdir -p the parent directory */
     char dir[1024]; snprintf(dir, sizeof(dir), "%s", cp);
     char *slash = strrchr(dir, '/');
     if (slash) {
         *slash = '\0';
-        /* Best-effort mkdir; ignore return (already exists is fine) */
         char cmd[1100]; snprintf(cmd, sizeof(cmd), "mkdir -p '%s' 2>/dev/null", dir);
         int _r = system(cmd); (void)_r;
     }
@@ -424,6 +410,7 @@ static int read_cache(buf_t *out) {
     return out->len > 0 ? 0 : -1;
 }
 
+/* ── Vault loader ────────────────────────────────────────────────────────── */
 
 static int load_vault(const char *passphrase) {
     const char *zac = getenv("ZAC_TOKEN");
@@ -433,30 +420,28 @@ static int load_vault(const char *passphrase) {
     if (!buf.data) return -1;
     int ok = 0;
 
-    /* Tier 1: public genesis-vault — no token needed, always try first */
+    /* Tier 1: public genesis-vault — no token, always first */
     fprintf(stderr, "[vault-decrypt] trying public vault...\n");
     ok = (https_get(VAULT_URL_PUBLIC, NULL, NULL, &buf) == 0);
-    if (!ok) {
-        /* Tier 2: monorepo via ZAC — canonical source (matches Node Tier 2) */
-        if (zac && zac[0]) {
-            fprintf(stderr, "[vault-decrypt] trying monorepo vault (ZAC)...\n");
-            buf.len = 0;
-            ok = (https_get(VAULT_URL_MONO, zac,
-                            "application/vnd.github.raw+json", &buf) == 0);
-        }
+
+    /* Tier 2: monorepo via ZAC */
+    if (!ok && zac && zac[0]) {
+        fprintf(stderr, "[vault-decrypt] trying monorepo vault (ZAC)...\n");
+        buf.len = 0;
+        ok = (https_get(VAULT_URL_MONO, zac,
+                        "application/vnd.github.raw+json", &buf) == 0);
     }
-    if (!ok) {
-        /* Tier 3: ESB via VFC — fallback when ZAC dead (matches Node Tier 3) */
-        if (vfc && vfc[0]) {
-            fprintf(stderr, "[vault-decrypt] trying ESB vault (VFC)...\n");
-            buf.len = 0;
-            ok = (https_get(VAULT_URL_ESB, vfc,
-                            "application/vnd.github.raw+json", &buf) == 0);
-        }
+
+    /* Tier 3: ESB via VFC */
+    if (!ok && vfc && vfc[0]) {
+        fprintf(stderr, "[vault-decrypt] trying ESB vault (VFC)...\n");
+        buf.len = 0;
+        ok = (https_get(VAULT_URL_ESB, vfc,
+                        "application/vnd.github.raw+json", &buf) == 0);
     }
+
+    /* Tier 4: stale local cache */
     if (!ok) {
-        /* Tier 4: stale local cache — encrypted vault.json; still needs passphrase.
-         * Written by vault-decrypt on every successful network load. */
         fprintf(stderr, "[vault-decrypt] network tiers exhausted — trying stale cache...\n");
         buf.len = 0;
         ok = (read_cache(&buf) == 0);
@@ -470,10 +455,7 @@ static int load_vault(const char *passphrase) {
 
     fprintf(stderr, "[vault-decrypt] fetched %zu bytes, decrypting...\n", buf.len);
     int n = walk_vault(buf.data, passphrase);
-
-    /* Cache the encrypted bytes on every successful network load */
     if (n > 0) write_cache(buf.data, buf.len);
-
     free(buf.data);
 
     if (n == 0) {
@@ -496,12 +478,13 @@ int main(int argc, char **argv) {
             "  VAULT_PASSPHRASE=<pp> vault-decrypt --list     list key names only\n"
             "\n"
             "Build:\n"
-            "  gcc -O2 vault-decrypt.c -lssl -lcrypto -o vault-decrypt\n"
+            "  gcc -O2 -D_POSIX_C_SOURCE=200809L vault-decrypt.c sha512.c aes256gcm.c -o vault-decrypt\n"
             "\n"
-            "One-liner (cold session):\n"
-            "  curl -sL https://raw.githubusercontent.com/wzbuck01/genesis-vault"
-                        "/main/vault-decrypt.c \\\n"
-            "    | gcc -O2 -x c - -lssl -lcrypto -o vault-decrypt\n");
+            "Multi-file bootstrap (cold session):\n"
+            "  for f in vault-decrypt.c sha512.c sha512.h aes256gcm.c aes256gcm.h genesis_secure.h; do\n"
+            "    curl -fsSL https://raw.githubusercontent.com/wzbuck01/genesis-vault/main/$f -o $f\n"
+            "  done\n"
+            "  gcc -O2 -D_POSIX_C_SOURCE=200809L vault-decrypt.c sha512.c aes256gcm.c -o vault-decrypt\n");
         return 1;
     }
 
