@@ -53,6 +53,7 @@
 #include "genesis_secure.h"
 
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -466,6 +467,429 @@ static int load_vault(const char *passphrase) {
     return 0;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * VAULT SET — write path (--set KEY VALUE)
+ * Seals VALUE for KEY with AES-256-GCM + PBKDF2-SHA512, updates the vault
+ * JSON in memory, and PUTs to all three canonical vault locations:
+ *   1. wzbuck01/genesis-monorepo/vault/vault.json  (ZAC_TOKEN)
+ *   2. wzbuck01/genesis-vault/vault.json            (ZAC_TOKEN)
+ *   3. Prime-Velocity/exponential-session-bootstrap/vault/vault.json  (PV_TOKEN)
+ *
+ * Env: VAULT_PASSPHRASE + ZAC_TOKEN required. PV_TOKEN optional (ESB skipped if absent).
+ * Runtime dep: curl in PATH (same as read path).
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#include <stdint.h>
+#include <time.h>
+
+/* ── Base64url encode ────────────────────────────────────────────────────── */
+
+static const char B64URL[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/* Returns number of chars written (no null terminator).
+ * out must have capacity ceil(inlen * 4/3) + 1 bytes. */
+static size_t b64url_encode(const uint8_t *in, size_t inlen, char *out) {
+    size_t oi = 0;
+    for (size_t i = 0; i < inlen; i += 3) {
+        uint32_t v  = (uint32_t)in[i] << 16;
+        if (i+1 < inlen) v |= (uint32_t)in[i+1] << 8;
+        if (i+2 < inlen) v |= (uint32_t)in[i+2];
+        out[oi++] = B64URL[(v >> 18) & 0x3F];
+        out[oi++] = B64URL[(v >> 12) & 0x3F];
+        if (i+1 < inlen) out[oi++] = B64URL[(v >>  6) & 0x3F];
+        if (i+2 < inlen) out[oi++] = B64URL[(v      ) & 0x3F];
+    }
+    out[oi] = '\0';
+    return oi;
+}
+
+/* ── Seal a plaintext value → P⟨base64url⟩ token ────────────────────────── */
+
+/* out must be at least MAX_VAL + 128 bytes.
+ * Returns 0 on success. */
+static int vault_seal(const char *passphrase, const char *label,
+                      const char *plaintext,  char *out, size_t outmax) {
+    /* Key derivation */
+    char salt[300];
+    snprintf(salt, sizeof(salt), "pv-vault-v1:%s", label);
+    uint8_t key[32];
+    pbkdf2_sha512((const uint8_t *)passphrase, strlen(passphrase),
+                  (const uint8_t *)salt,       strlen(salt),
+                  PBKDF2_ROUNDS, key, 32);
+
+    /* Random nonce */
+    uint8_t nonce[NONCE_LEN];
+#if defined(_WIN32)
+    /* On Windows: use BCryptGenRandom via CryptGenRandom */
+    HCRYPTPROV hProv;
+    CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
+    CryptGenRandom(hProv, NONCE_LEN, nonce);
+    CryptReleaseContext(hProv, 0);
+#else
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd || fread(nonce, 1, NONCE_LEN, urnd) != NONCE_LEN) {
+        if (urnd) fclose(urnd);
+        /* Fallback: time-based (weak, log a warning) */
+        uint64_t ts = (uint64_t)time(NULL);
+        memcpy(nonce, &ts, 8);
+        fprintf(stderr, "[vault-set] WARNING: /dev/urandom unavailable — weak nonce\n");
+    } else {
+        fclose(urnd);
+    }
+#endif
+
+    /* Encrypt */
+    size_t ptlen = strlen(plaintext);
+    if (ptlen + NONCE_LEN + TAG_LEN + 2 > outmax) return -1;
+
+    uint8_t *blob     = (uint8_t *)malloc(NONCE_LEN + ptlen + TAG_LEN + 4);
+    if (!blob) return -1;
+    uint8_t *ct       = blob + NONCE_LEN;
+    uint8_t *tag_dst  = ct + ptlen;
+    memcpy(blob, nonce, NONCE_LEN);
+
+    aes256gcm_encrypt(key, nonce, NONCE_LEN,
+                      (const uint8_t *)plaintext, ptlen,
+                      NULL, 0,
+                      ct, tag_dst);
+    memset(key, 0, sizeof(key)); __asm__ volatile("" ::: "memory");
+
+    /* Encode blob to base64url */
+    size_t bloblen = NONCE_LEN + ptlen + TAG_LEN;
+    size_t enclen  = (bloblen * 4 + 2) / 3 + 4;
+    char *encbuf   = (char *)malloc(enclen);
+    if (!encbuf) { free(blob); return -1; }
+    b64url_encode(blob, bloblen, encbuf);
+    free(blob);
+
+    /* Format: P⟨base64url⟩  (⟨ = U+27E8, ⟩ = U+27E9, UTF-8) */
+    int r = snprintf(out, outmax, "P\xe2\x9f\xa8%s\xe2\x9f\xa9", encbuf);
+    free(encbuf);
+    return (r > 0 && (size_t)r < outmax) ? 0 : -1;
+}
+
+/* ── JSON entry patcher ───────────────────────────────────────────────────── */
+
+/* Updates or inserts entries["key"] = token in raw vault JSON.
+ * Returns newly allocated string (caller must free), or NULL on error.
+ * Simple string-level patch — vault format is controlled, not arbitrary JSON. */
+static char *json_patch_entry(const char *json, const char *key, const char *token) {
+    /* Build the search pattern: "KEY": "  */
+    char search[MAX_KEY + 8];
+    snprintf(search, sizeof(search), "\"%s\":", key);
+
+    char *out      = (char *)malloc(strlen(json) + strlen(token) + 256);
+    if (!out) return NULL;
+
+    const char *found = strstr(json, search);
+    if (found) {
+        /* Key exists — replace token: skip to opening " of value, find closing " */
+        const char *vs = found + strlen(search);
+        while (*vs == ' ' || *vs == '\n' || *vs == '\r') vs++;
+        if (*vs != '"') { free(out); return NULL; }    /* unexpected format */
+        vs++;                                           /* past opening " */
+        const char *ve = vs;
+        /* Find end of P⟨...⟩ sealed token — scan to closing ⟩ then " */
+        while (*ve && *ve != '"') {
+            /* skip UTF-8 sequences */
+            if ((unsigned char)*ve >= 0x80) { ve++; continue; }
+            ve++;
+        }
+        /* Copy: before opening ", insert new token, copy rest */
+        size_t pre = (size_t)((vs - 1) - json);  /* up to and incl the " */
+        memcpy(out, json, pre);
+        size_t oi = pre;
+        oi += (size_t)sprintf(out + oi, "%s", token);
+        strcpy(out + oi, ve);
+    } else {
+        /* Key not found — insert before closing } of "entries" */
+        const char *entries = strstr(json, "\"entries\"");
+        if (!entries) { free(out); return NULL; }
+        const char *brace = strchr(entries, '{');
+        if (!brace) { free(out); return NULL; }
+
+        /* Find the closing } of entries — scan forward counting braces */
+        const char *p = brace + 1;
+        int depth = 1;
+        while (*p && depth > 0) {
+            if (*p == '{') depth++;
+            else if (*p == '}') depth--;
+            if (depth > 0) p++;
+        }
+        /* p now points to the closing } of entries */
+        /* Find the last real entry before } to know if we need a comma */
+        const char *prev = p - 1;
+        while (prev > brace && (*prev == ' ' || *prev == '\n' || *prev == '\r')) prev--;
+        int need_comma = (*prev != '{');  /* empty entries block gets no comma */
+
+        size_t pre = (size_t)(p - json);
+        memcpy(out, json, pre);
+        size_t oi = pre;
+        if (need_comma) out[oi++] = ',';
+        oi += (size_t)sprintf(out + oi, "\n    \"%s\": \"%s\"", key, token);
+        strcpy(out + oi, p);
+    }
+    return out;
+}
+
+/* ── Update _updated timestamp ───────────────────────────────────────────── */
+
+static char *json_set_updated(const char *json) {
+    time_t now = time(NULL);
+    struct tm *utc = gmtime(&now);
+    char ts[32];
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", utc);
+
+    const char *tag = "\"_updated\":";
+    const char *found = strstr(json, tag);
+    if (!found) return strdup(json);    /* no _updated field, leave as-is */
+
+    /* Find the value string */
+    const char *vs = found + strlen(tag);
+    while (*vs == ' ') vs++;
+    if (*vs != '"') return strdup(json);
+    vs++;
+    const char *ve = strchr(vs, '"');
+    if (!ve) return strdup(json);
+
+    size_t outlen = strlen(json) + 32;
+    char *out = (char *)malloc(outlen);
+    if (!out) return NULL;
+    size_t pre = (size_t)(vs - json);
+    memcpy(out, json, pre);
+    size_t oi = pre;
+    oi += (size_t)sprintf(out + oi, "%s", ts);
+    strcpy(out + oi, ve);
+    return out;
+}
+
+/* ── GitHub Contents API PUT ─────────────────────────────────────────────── */
+
+/* GET SHA + PUT new content. Returns commit SHA prefix or NULL on failure. */
+static char *gh_put_vault(const char *api_path, const char *token,
+                          const char *b64_content, const char *message) {
+    if (!shell_safe(token)) { fprintf(stderr, "[vault-set] unsafe token\n"); return NULL; }
+
+    /* Step 1: GET current SHA */
+    char url[512];
+    snprintf(url, sizeof(url), "https://api.github.com/repos/%s", api_path);
+    buf_t meta = { malloc(65536), 0, 65536 };
+    if (!meta.data) return NULL;
+
+    if (https_get(url, token, "application/vnd.github.v3+json", &meta) != 0) {
+        free(meta.data); return NULL;
+    }
+
+    /* Parse "sha": "..." from JSON response */
+    const char *sha_tag = "\"sha\":";
+    const char *sp = strstr(meta.data, sha_tag);
+    char sha[64] = {0};
+    if (sp) {
+        sp += strlen(sha_tag);
+        while (*sp == ' ' || *sp == '"') sp++;
+        size_t i = 0;
+        while (*sp && *sp != '"' && i < 63) sha[i++] = *sp++;
+    }
+    free(meta.data);
+
+    /* Step 2: Build PUT body → temp file */
+    char bodypath[256];
+    snprintf(bodypath, sizeof(bodypath), "/tmp/vault-set-body-%d.json", (int)getpid());
+    FILE *bf = fopen(bodypath, "w");
+    if (!bf) return NULL;
+    fprintf(bf, "{\"message\":\"%s\",\"content\":\"%s\"", message, b64_content);
+    if (sha[0]) fprintf(bf, ",\"sha\":\"%s\"", sha);
+    fprintf(bf, "}");
+    fclose(bf);
+
+    /* Step 3: curl PUT */
+    char resppath[256];
+    snprintf(resppath, sizeof(resppath), "/tmp/vault-set-resp-%d.json", (int)getpid());
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd),
+        "curl -s --noproxy '*' --max-time 30 -X PUT "
+        "-H 'Authorization: token %s' "
+        "-H 'Content-Type: application/json' "
+        "-H 'User-Agent: genesis/vault-decrypt' "
+        "-w '\\n%%{http_code}' "
+        "-d @%s '%s' > %s 2>/dev/null",
+        token, bodypath, url, resppath);
+
+    int rc = system(cmd);
+    remove(bodypath);
+
+    if (rc != 0) { remove(resppath); return NULL; }
+
+    /* Read response and extract commit SHA */
+    FILE *rf = fopen(resppath, "r");
+    char *commit_sha = NULL;
+    if (rf) {
+        char resp[8192] = {0};
+        fread(resp, 1, sizeof(resp)-1, rf);
+        fclose(rf);
+        /* Find commit.sha */
+        const char *cs = strstr(resp, "\"commit\"");
+        if (cs) {
+            const char *sh = strstr(cs, "\"sha\":");
+            if (sh) {
+                sh += 6;
+                while (*sh == ' ' || *sh == '"') sh++;
+                char buf[16] = {0};
+                for (int i = 0; i < 12 && *sh && *sh != '"'; i++, sh++)
+                    buf[i] = *sh;
+                commit_sha = strdup(buf);
+            }
+        }
+        /* Check HTTP status (last line) */
+        char *last = strrchr(resp, '\n');
+        if (last && atoi(last+1) / 100 != 2) {
+            fprintf(stderr, "[vault-set] PUT HTTP %s for %s\n", last+1, api_path);
+            free(commit_sha);
+            commit_sha = NULL;
+        }
+    }
+    remove(resppath);
+    return commit_sha;  /* NULL = failure */
+}
+
+/* ── vault_set_all — main write orchestrator ─────────────────────────────── */
+
+static int vault_set_all(const char *passphrase, const char *key, const char *value) {
+    const char *zac   = getenv("ZAC_TOKEN");
+    const char *pvtok = getenv("PV_TOKEN");
+
+    if (!zac || !zac[0]) {
+        fprintf(stderr, "[vault-set] ZAC_TOKEN required for vault writes\n");
+        return 1;
+    }
+
+    /* 1. Load current vault JSON */
+    buf_t raw = { malloc(MAX_VAULT), 0, MAX_VAULT };
+    if (!raw.data) return 1;
+    /* Try monorepo first (canonical), fall back to public */
+    int loaded = 0;
+    if (zac && zac[0]) {
+        loaded = (https_get(
+            "https://api.github.com/repos/wzbuck01/genesis-monorepo/contents/vault/vault.json",
+            zac, "application/vnd.github.v3+json", &raw) == 0);
+        if (loaded) {
+            /* Unwrap Contents API base64 — find "content": "..." */
+            const char *ctag = "\"content\":";
+            const char *cp   = strstr(raw.data, ctag);
+            if (cp) {
+                cp += strlen(ctag);
+                while (*cp == ' ' || *cp == '"') cp++;
+                /* Decode base64 (standard, with \n) */
+                char *decoded = (char *)malloc(raw.len);
+                if (!decoded) { free(raw.data); return 1; }
+                size_t di = 0;
+                static const int T64[256] = {
+                    [0 ... 255] = -1,
+                    ['A']=0,['B']=1,['C']=2,['D']=3,['E']=4,['F']=5,['G']=6,['H']=7,
+                    ['I']=8,['J']=9,['K']=10,['L']=11,['M']=12,['N']=13,['O']=14,['P']=15,
+                    ['Q']=16,['R']=17,['S']=18,['T']=19,['U']=20,['V']=21,['W']=22,['X']=23,
+                    ['Y']=24,['Z']=25,['a']=26,['b']=27,['c']=28,['d']=29,['e']=30,['f']=31,
+                    ['g']=32,['h']=33,['i']=34,['j']=35,['k']=36,['l']=37,['m']=38,['n']=39,
+                    ['o']=40,['p']=41,['q']=42,['r']=43,['s']=44,['t']=45,['u']=46,['v']=47,
+                    ['w']=48,['x']=49,['y']=50,['z']=51,['0']=52,['1']=53,['2']=54,['3']=55,
+                    ['4']=56,['5']=57,['6']=58,['7']=59,['8']=60,['9']=61,['+']=62,['/']=63,
+                    ['=']=64 };
+                uint32_t acc = 0; int bits = 0;
+                for (const char *s = cp; *s && *s != '"'; s++) {
+                    int v = T64[(unsigned char)*s];
+                    if (v < 0) continue;
+                    if (v == 64) break;
+                    acc = (acc << 6) | (uint32_t)v; bits += 6;
+                    if (bits >= 8) { bits -= 8; decoded[di++] = (char)((acc >> bits) & 0xFF); }
+                }
+                decoded[di] = '\0';
+                free(raw.data);
+                raw.data = decoded; raw.len = di;
+            }
+        }
+    }
+    if (!loaded || !strstr(raw.data, "entries")) {
+        /* Fall back to public vault */
+        raw.len = 0;
+        loaded = (https_get(VAULT_URL_PUBLIC, NULL, NULL, &raw) == 0);
+    }
+    if (!loaded) {
+        fprintf(stderr, "[vault-set] could not load vault\n");
+        free(raw.data); return 1;
+    }
+
+    /* 2. Seal the value */
+    char *token = (char *)malloc(MAX_VAL + 256);
+    if (!token) { free(raw.data); return 1; }
+    if (vault_seal(passphrase, key, value, token, MAX_VAL + 256) != 0) {
+        fprintf(stderr, "[vault-set] seal failed\n");
+        free(token); free(raw.data); return 1;
+    }
+
+    /* 3. Patch vault JSON */
+    char *patched = json_patch_entry(raw.data, key, token);
+    free(token); free(raw.data);
+    if (!patched) { fprintf(stderr, "[vault-set] json patch failed\n"); return 1; }
+
+    char *updated = json_set_updated(patched);
+    free(patched);
+    if (!updated) { fprintf(stderr, "[vault-set] timestamp update failed\n"); return 1; }
+
+    /* 4. Base64-encode for Contents API */
+    size_t jlen   = strlen(updated);
+    size_t b64len = (jlen * 4 + 2) / 3 + 4;
+    char *b64     = (char *)malloc(b64len);
+    if (!b64) { free(updated); return 1; }
+    /* Standard base64 (not url-safe) for GitHub Contents API */
+    static const char B64STD[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t bi = 0;
+    for (size_t i = 0; i < jlen; i += 3) {
+        uint32_t v  = (uint32_t)(uint8_t)updated[i] << 16;
+        if (i+1 < jlen) v |= (uint32_t)(uint8_t)updated[i+1] << 8;
+        if (i+2 < jlen) v |= (uint32_t)(uint8_t)updated[i+2];
+        b64[bi++] = B64STD[(v >> 18) & 0x3F];
+        b64[bi++] = B64STD[(v >> 12) & 0x3F];
+        b64[bi++] = (i+1 < jlen) ? B64STD[(v >> 6) & 0x3F] : '=';
+        b64[bi++] = (i+2 < jlen) ? B64STD[(v     ) & 0x3F] : '=';
+    }
+    b64[bi] = '\0';
+    free(updated);
+
+    char msg[MAX_KEY + 32];
+    snprintf(msg, sizeof(msg), "vault: set %s", key);
+
+    int rc = 0;
+
+    /* 5a. Write target 1: monorepo (canonical) */
+    char *sha1 = gh_put_vault(
+        "wzbuck01/genesis-monorepo/contents/vault/vault.json",
+        zac, b64, msg);
+    if (sha1) { fprintf(stderr, "[vault-set] monorepo -> %s\n", sha1); free(sha1); }
+    else      { fprintf(stderr, "[vault-set] monorepo write FAILED\n"); rc = 1; }
+
+    /* 5b. Write target 2: public genesis-vault */
+    char *sha2 = gh_put_vault(
+        "wzbuck01/genesis-vault/contents/vault.json",
+        zac, b64, msg);
+    if (sha2) { fprintf(stderr, "[vault-set] genesis-vault -> %s\n", sha2); free(sha2); }
+    else      { fprintf(stderr, "[vault-set] genesis-vault write failed (non-fatal)\n"); }
+
+    /* 5c. Write target 3: ESB mirror */
+    if (pvtok && pvtok[0]) {
+        char *sha3 = gh_put_vault(
+            "Prime-Velocity/exponential-session-bootstrap/contents/vault/vault.json",
+            pvtok, b64, msg);
+        if (sha3) { fprintf(stderr, "[vault-set] ESB mirror -> %s\n", sha3); free(sha3); }
+        else      { fprintf(stderr, "[vault-set] ESB mirror failed (non-fatal)\n"); }
+    } else {
+        fprintf(stderr, "[vault-set] ESB mirror skipped — PV_TOKEN not set\n");
+    }
+
+    free(b64);
+    return rc;
+}
+
+
 /* ── main ────────────────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
@@ -476,6 +900,7 @@ int main(int argc, char **argv) {
             "  VAULT_PASSPHRASE=<pp> vault-decrypt --all      print all keys\n"
             "  VAULT_PASSPHRASE=<pp> vault-decrypt --env      export KEY=val lines\n"
             "  VAULT_PASSPHRASE=<pp> vault-decrypt --list     list key names only\n"
+            "  VAULT_PASSPHRASE=<pp> ZAC_TOKEN=<tok> [PV_TOKEN=<tok>] vault-decrypt --set KEY VALUE  write to all 3 vaults\n"
             "\n"
             "Build:\n"
             "  gcc -O2 -D_POSIX_C_SOURCE=200809L vault-decrypt.c sha512.c aes256gcm.c -o vault-decrypt\n"
@@ -514,6 +939,14 @@ int main(int argc, char **argv) {
         for (int i = 0; i < g_count; i++)
             printf("export %s='%s'\n", g_entries[i].key, g_entries[i].val);
         return 0;
+    }
+
+    if (strcmp(cmd, "--set") == 0) {
+        if (argc < 4) {
+            fprintf(stderr, "Usage: VAULT_PASSPHRASE=<pp> ZAC_TOKEN=<tok> vault-decrypt --set KEY VALUE\n");
+            return 1;
+        }
+        return vault_set_all(pp, argv[2], argv[3]);
     }
 
     /* Single key lookup */
