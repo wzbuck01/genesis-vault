@@ -892,6 +892,33 @@ static int vault_set_all(const char *passphrase, const char *key, const char *va
 
 /* ── main ────────────────────────────────────────────────────────────────── */
 
+/* Returns 1 if key is a valid POSIX shell identifier (no '/' or other invalid chars). */
+static int is_valid_sh_identifier(const char *key) {
+    if (!key || !*key) return 0;
+    if (*key >= '0' && *key <= '9') return 0;  /* must not start with digit */
+    for (const char *p = key; *p; p++) {
+        if (!((*p >= 'a' && *p <= 'z') ||
+              (*p >= 'A' && *p <= 'Z') ||
+              (*p >= '0' && *p <= '9') ||
+              *p == '_'))
+            return 0;
+    }
+    return 1;
+}
+
+/* Prints val as a POSIX single-quoted string, escaping embedded single quotes
+ * via the '\'' idiom so the output is always safe to eval/source. */
+static void print_sh_escaped(const char *val) {
+    putchar('\'');
+    for (const char *p = val; *p; p++) {
+        if (*p == '\'')
+            fputs("'\\''", stdout);
+        else
+            putchar(*p);
+    }
+    putchar('\'');
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr,
@@ -936,8 +963,12 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(cmd, "--env") == 0) {
-        for (int i = 0; i < g_count; i++)
-            printf("export %s='%s'\n", g_entries[i].key, g_entries[i].val);
+        for (int i = 0; i < g_count; i++) {
+            if (!is_valid_sh_identifier(g_entries[i].key)) continue;
+            printf("export %s=", g_entries[i].key);
+            print_sh_escaped(g_entries[i].val);
+            putchar('\n');
+        }
         return 0;
     }
 
