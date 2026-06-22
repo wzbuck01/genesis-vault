@@ -1,0 +1,5 @@
+{
+  "entry": "93340544f07f: feat(bootstrap): precompiled vault-decrypt binary (linux/x86-64)\n\nEliminates compile step from bootstrap Step 1.\nBuilt from patched source: BOOT-DEF-003 (--env escaping) + fread warning fixed.\nSource files remain in repo as build fallback.\n\nNew Step 1:\n  curl -fsSL https://raw.githubusercontent.com/wzbuck01/genesis-vault/main/vault-decrypt -o vault-decrypt\n  chmod +x vault-decrypt\n\nCDT: 2026-06-22 3:10 PM CDT",
+  "sha": "93340544f07f",
+  "added_at": "2026-06-22T20:05:39.359Z"
+}
