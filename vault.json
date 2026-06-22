@@ -47,7 +47,58 @@
     "GENESIS_SESSION_JSON": "P⟨6iP0vlyOjzH7fVZBUTe6CxeMET92cCIgtDXT20GSul-ykxr5sZgO5UBAWsEYD8lUVnugllo0LKuxk3UcBGYwhbCT⟩",
     "ssh/gmktec_ed25519": "P⟨wlyaRFuCjYHoq2OXiYALunLNWG_9td2nbNJ56wFGgCaF3MBBuJ2rSwTPtAGSN4ypyAegAWwqhOSQsb01KQStUwdTlgA9se3cVa1sAbgeC_Zqn1Umnwfb7q2_jM5I1wFdUifgv7mBED8WG8PXjEgPKZ3bUyLyILzGv3N53UzO12qiquwA69nOptjgXzZrsDWmyvdfLqpoqBIaYIcB9wlopBn2ZyYVUxAE6ieJllHaeNzhAYBvT3TUUGxQeCBgdwOfx2f7Q0ANrLTxDWOb3fOjXyDMtoR72SdIqGLHxPzTUvAKq9xIywBOPbi0Una-Pnec56JZtb0XfnoTTOPpdqQjNck8omQDx7FD2r_nFExB7sEA1gV7tuykPeBfZ9ESqKEyMhE9HZjHm1_5XVHROA4GYOSQI65VgDmdLt5CKY6u5s_06UFGD5jx9ZcMFW-WPX1gGEQ7DqhB6GctEHPdt6GlavUCEoGsScqbJ8t621Zkk0IOMEW5rrfNsQx3isHxnycVGyRy2MwY2fNo0VUqfDDa0nJZpk48WrB_j4c3bek6x9cjCfHBVDLy10G2pKk5Iy_psm6gvc7_⟩",
     "SKYNET_EXTERNAL_URL": "P⟨DzHArkx-pfotg0inU8BVHQ2KJzmzsV2bocwuJPYCONKqo3Y27hPl0ApMOfxNsqob8zY5DvIm8nKc7dH4DE32pm8n⟩",
-    "SKYNET_CREDS_JSON": "P⟨aAYlzrN6rtJZ8Yj1Sgbg9gW63Nl-c5ZSH1WyKt8S_cYydOgeE5ecOB3pHzNU6PCDfSR2wEEXx1efk2Mt_s4318nfYhxSgejAyGFEYNduiT60XRMXKSe6c8aC9SmqdbZ9hdCGUydUc0et625gJ3Vdd6Kdu13J9Q468Vb4bb4F3iyO3rHzfWNDqlFRb9kMQxVlaMFzgqhNLx7AWis1mchJ4uK4WwdqcqaHPjr1q6DhdkHIiVfOkYJKE33p2nt9_o6K9TL3TyBgvZiiTrwpFSVFEZmCFcBjw2dyNIHn7421lu9HNpNZrtje30f7qEHJZQ⟩"
+    "SKYNET_CREDS_JSON": {
+      "label": "SKYNET_CREDS_JSON",
+      "version": 1,
+      "salt": "6553951e7b463b1ca18e05e97934c2e4f33fdf9dc017a6587172366f6625e134",
+      "iv": "5bd333b9ecf780d0d6870ace0805a53c",
+      "tag": "fd83d1daa3c671891c5aec2a8d802a92",
+      "ciphertext": "c73402a1df9ad7f2a36909de91d044d118e3c029c3dbda2e204378faf6a2c80e4aa359bd268c486eba6e71b55ea20d7cdffd2433548f39a17017566e8a7c406cfecbbe8e27d9a53d3aeaead1fff673825ab5e81a74677642ea2a66b3477fe1f2e7d25c7e18d07be4f5fceea190173e63eec17047af6f26ddd047cd43085b94be029ee779865f1824341ca9fc654e1953cc66c26dd51c36ae8883a6aaf2cd1482adb25eeba38686031092aae607db185f84888a4aebeda328568821f2d4a94889e69316829644cdadba8bbb229416848e5176",
+      "kdf": {
+        "algo": "pbkdf2-sha512",
+        "iterations": 210000,
+        "keylen": 32
+      }
+    },
+    "SKYNET_TUNNEL_ID": {
+      "label": "SKYNET_TUNNEL_ID",
+      "version": 1,
+      "salt": "b829de315a45bc88419e479aec7df6f3864b933be4c8621b04406337bb924df8",
+      "iv": "cf1a5c15ee7ec751acd848559c0d8efd",
+      "tag": "417d31ced090147f2f9bc51e40e66d86",
+      "ciphertext": "c1a1be10270a320e057621bcfd9baa40aadcac31c0f753646b50f4b21c35b41eb05ffdd6",
+      "kdf": {
+        "algo": "pbkdf2-sha512",
+        "iterations": 210000,
+        "keylen": 32
+      }
+    },
+    "SKYNET_TUNNEL_SECRET": {
+      "label": "SKYNET_TUNNEL_SECRET",
+      "version": 1,
+      "salt": "e48a3a9cad2afe7e05eb1900258ea3bb89199b559e84b47b38c86afd217b3c79",
+      "iv": "4a3f9827d903c74dcae10c8a53b407eb",
+      "tag": "a793ba06c3113fdcc5904ec8765ab978",
+      "ciphertext": "88a35054f8a2b576c95e2085544b3a2ba86610c6eea323aaf6bbd95b70af3f11e1ea0b4cae874cbb0179374f5c298fac77b3e167c107f4341dc04a3da96a57da7b097f2b99c5ac5f89664f086f03b48ab8e659f5c71bdb07",
+      "kdf": {
+        "algo": "pbkdf2-sha512",
+        "iterations": 210000,
+        "keylen": 32
+      }
+    },
+    "SKYNET_TUNNEL_TOKEN": {
+      "label": "SKYNET_TUNNEL_TOKEN",
+      "version": 1,
+      "salt": "8bbe0b4b4393c6a2a91d42df718da8ba25b59f61c4a858aa9ead2776c7ca88e6",
+      "iv": "c0895681280edfe528ec98e17eb798a9",
+      "tag": "162de2e1f12e31caf4e633d0471633f8",
+      "ciphertext": "da7d943af729fb11fbea5e3df1123ea8c36e10fa35b2f48770e8ed8b191e20a36c66246d6fa2e615177d36d978ff614d0c658f4b7031ca9fb9aa925de370291158541846c64808f72f66b3784753bb142b31568bfe2d6bc22b7d4e87d0d965751dcdf470188ff090cdd019f5cf9538504775260d9e968ecd9cffa114785afe759580d2065a811568f44191181d033096701bf5156509e78b3078ab7c4ec3deb09dd343fc0c6ae64e27f5baca6d829a5892d29cea9e5c1db0d7adbb41407148daadf6375ab4cf474538a73314a523886a9197b8e83dd121c2ad714c3ba5ae4aba6c8d722e113d46dbf9ec94880abeeef2",
+      "kdf": {
+        "algo": "pbkdf2-sha512",
+        "iterations": 210000,
+        "keylen": 32
+      }
+    }
   },
   "_updated": "2026-06-22T23:00:32Z"
 }
