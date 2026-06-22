@@ -725,7 +725,7 @@ static char *gh_put_vault(const char *api_path, const char *token,
     char *commit_sha = NULL;
     if (rf) {
         char resp[8192] = {0};
-        fread(resp, 1, sizeof(resp)-1, rf);
+        (void)fread(resp, 1, sizeof(resp)-1, rf);
         fclose(rf);
         /* Find commit.sha */
         const char *cs = strstr(resp, "\"commit\"");
