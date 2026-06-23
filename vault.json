@@ -60,19 +60,7 @@
         "keylen": 32
       }
     },
-    "SKYNET_TUNNEL_ID": {
-      "label": "SKYNET_TUNNEL_ID",
-      "version": 1,
-      "salt": "b829de315a45bc88419e479aec7df6f3864b933be4c8621b04406337bb924df8",
-      "iv": "cf1a5c15ee7ec751acd848559c0d8efd",
-      "tag": "417d31ced090147f2f9bc51e40e66d86",
-      "ciphertext": "c1a1be10270a320e057621bcfd9baa40aadcac31c0f753646b50f4b21c35b41eb05ffdd6",
-      "kdf": {
-        "algo": "pbkdf2-sha512",
-        "iterations": 210000,
-        "keylen": 32
-      }
-    },
+    "SKYNET_TUNNEL_ID": "P⟨sywDKNzUBUSXiaVsrd0d5COgrYZ3VDJa633VKI4nGRHAxcqj-Zp4w7_GR7yFM395aPOXKpPDDAHDTGDn5eAh3A⟩",
     "SKYNET_TUNNEL_SECRET": {
       "label": "SKYNET_TUNNEL_SECRET",
       "version": 1,
