@@ -47,46 +47,10 @@
     "GENESIS_SESSION_JSON": "P⟨6iP0vlyOjzH7fVZBUTe6CxeMET92cCIgtDXT20GSul-ykxr5sZgO5UBAWsEYD8lUVnugllo0LKuxk3UcBGYwhbCT⟩",
     "ssh/gmktec_ed25519": "P⟨wlyaRFuCjYHoq2OXiYALunLNWG_9td2nbNJ56wFGgCaF3MBBuJ2rSwTPtAGSN4ypyAegAWwqhOSQsb01KQStUwdTlgA9se3cVa1sAbgeC_Zqn1Umnwfb7q2_jM5I1wFdUifgv7mBED8WG8PXjEgPKZ3bUyLyILzGv3N53UzO12qiquwA69nOptjgXzZrsDWmyvdfLqpoqBIaYIcB9wlopBn2ZyYVUxAE6ieJllHaeNzhAYBvT3TUUGxQeCBgdwOfx2f7Q0ANrLTxDWOb3fOjXyDMtoR72SdIqGLHxPzTUvAKq9xIywBOPbi0Una-Pnec56JZtb0XfnoTTOPpdqQjNck8omQDx7FD2r_nFExB7sEA1gV7tuykPeBfZ9ESqKEyMhE9HZjHm1_5XVHROA4GYOSQI65VgDmdLt5CKY6u5s_06UFGD5jx9ZcMFW-WPX1gGEQ7DqhB6GctEHPdt6GlavUCEoGsScqbJ8t621Zkk0IOMEW5rrfNsQx3isHxnycVGyRy2MwY2fNo0VUqfDDa0nJZpk48WrB_j4c3bek6x9cjCfHBVDLy10G2pKk5Iy_psm6gvc7_⟩",
     "SKYNET_EXTERNAL_URL": "P⟨DzHArkx-pfotg0inU8BVHQ2KJzmzsV2bocwuJPYCONKqo3Y27hPl0ApMOfxNsqob8zY5DvIm8nKc7dH4DE32pm8n⟩",
-    "SKYNET_CREDS_JSON": "P⟨vlkLmf1DFlLQakrPubLDpca6c6JV1yXhHB8qSowHQFeKvA8MYdv2qub-iesX3nQyh7CoK33v2dT7UcSnIr2iQhpvKLLkK6PqaEdQgl30JHx0MQKbT_SpzC-V0zkV0pFYbbIyN08W_Sh5aRzYZCTKvhsXoi-LSgfypFckFj_KtEZaV2lyvMkJunmhzhCxKG2n70f9nn9FUWq7AuJ_49aRXHWkxto2uqP6kqfHwkeA1UvT_wRQRuWHw9svCzwKa9T4nBBZjPV1a2Q66-q4UHtVM2wroOaPTLx4QssaHYQKnb55rYx2IYQlt7PFWMCxRg⟩",
-    "SKYNET_TUNNEL_ID": {
-      "label": "SKYNET_TUNNEL_ID",
-      "version": 1,
-      "salt": "b829de315a45bc88419e479aec7df6f3864b933be4c8621b04406337bb924df8",
-      "iv": "cf1a5c15ee7ec751acd848559c0d8efd",
-      "tag": "417d31ced090147f2f9bc51e40e66d86",
-      "ciphertext": "c1a1be10270a320e057621bcfd9baa40aadcac31c0f753646b50f4b21c35b41eb05ffdd6",
-      "kdf": {
-        "algo": "pbkdf2-sha512",
-        "iterations": 210000,
-        "keylen": 32
-      }
-    },
-    "SKYNET_TUNNEL_SECRET": {
-      "label": "SKYNET_TUNNEL_SECRET",
-      "version": 1,
-      "salt": "e48a3a9cad2afe7e05eb1900258ea3bb89199b559e84b47b38c86afd217b3c79",
-      "iv": "4a3f9827d903c74dcae10c8a53b407eb",
-      "tag": "a793ba06c3113fdcc5904ec8765ab978",
-      "ciphertext": "88a35054f8a2b576c95e2085544b3a2ba86610c6eea323aaf6bbd95b70af3f11e1ea0b4cae874cbb0179374f5c298fac77b3e167c107f4341dc04a3da96a57da7b097f2b99c5ac5f89664f086f03b48ab8e659f5c71bdb07",
-      "kdf": {
-        "algo": "pbkdf2-sha512",
-        "iterations": 210000,
-        "keylen": 32
-      }
-    },
-    "SKYNET_TUNNEL_TOKEN": {
-      "label": "SKYNET_TUNNEL_TOKEN",
-      "version": 1,
-      "salt": "8bbe0b4b4393c6a2a91d42df718da8ba25b59f61c4a858aa9ead2776c7ca88e6",
-      "iv": "c0895681280edfe528ec98e17eb798a9",
-      "tag": "162de2e1f12e31caf4e633d0471633f8",
-      "ciphertext": "da7d943af729fb11fbea5e3df1123ea8c36e10fa35b2f48770e8ed8b191e20a36c66246d6fa2e615177d36d978ff614d0c658f4b7031ca9fb9aa925de370291158541846c64808f72f66b3784753bb142b31568bfe2d6bc22b7d4e87d0d965751dcdf470188ff090cdd019f5cf9538504775260d9e968ecd9cffa114785afe759580d2065a811568f44191181d033096701bf5156509e78b3078ab7c4ec3deb09dd343fc0c6ae64e27f5baca6d829a5892d29cea9e5c1db0d7adbb41407148daadf6375ab4cf474538a73314a523886a9197b8e83dd121c2ad714c3ba5ae4aba6c8d722e113d46dbf9ec94880abeeef2",
-      "kdf": {
-        "algo": "pbkdf2-sha512",
-        "iterations": 210000,
-        "keylen": 32
-      }
-    }
+    "SKYNET_CREDS_JSON": "P⟨MGf1c3ui-IuKaiFKE9CWDBhUcb5q1skHYU3AclMMvBig8DbnM26YveXtB0n66H9a_Fz7hWCoWEYL72aAgKtTinUd93TVRZ-BHn7TipSlt2JaYuaPoDPt4eHoM7y_JmsZSQPxO4prmpppweEdp0_THsjjhv0YRI1Ue0AmffyqjKOzZonCUOnegQDiATJ-TAiql-Nge-gTd5aeA8WiZj0N536no7m1psNHvPYZhAjqs5rMuxSPlc7ty3RWSfFAvqXpBj1xytSJc_W3nj6obSnbENdpo7lIJELMTl2SLG2Ei7qLuOtZzSuhfCXryExJiA⟩",
+    "SKYNET_TUNNEL_ID": "P⟨juxmCedUBszNU3oUMCuuXpn1WteebzTXxFb1qLAoBraUs1RYeR2KD-v0AaOuBHoM3V_RJibR5K-VETO7GZxurw⟩",
+    "SKYNET_TUNNEL_SECRET": "P⟨Y7ktGGkseomm6F70SktzczSHHQk7zTV-fqU-J0ACDgBC1QGSNL_1zPDppxP3cCDV5CPGUVQI-a-PbbQh-j7H6MVoKEXvJVuToybq8oynwjbuuJ3uTaTWIlvxcUNInEziw8Ywome9T3hOngHpwle09r5BV_Q⟩",
+    "SKYNET_TUNNEL_TOKEN": "P⟨pli-TPJdxJPBbM89QQoIthHVElIuz-4e5OUESpv9ZrLOFfgaFp63vzWgBESTlQaK9-k8sfYn0-5k1IRVp-W8-Dr1-dkdz2FQTkxyCitCEJRylMkpAhAdJYNUI06FaCzIH_UG1nNm6Zshl-8_nta9QSwAYJos92qpfaoWLY_4AMieeWSQlEt82prvM7YXfBPdZ6qBYGEmrzbtSEcqi94Mi7FmjBiygHSBS1Pb6ErF7t33Smrce0167jZEzvqzyXlcwipFfvuJrgIePbsoo_nrmc1Fdam2OzbQaX2kPFEO2Mg3E39CqFV5x1DiGUzVpS0pI-W8Z5piEFXjqgRz7Z-Ftr3fF4Fq4Gr-KeGmpw⟩"
   },
   "_updated": "2026-06-22T23:00:32Z"
 }
