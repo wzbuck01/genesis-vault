@@ -73,20 +73,20 @@
         "keylen": 32
       }
     },
-    "SKYNET_TUNNEL_SECRET": "P⟨2FHHheMQ6j3UOx8ytj6XnVsqyI68174RAnmdL6USVvyGw1iS_AJ_jlrMOa_koXDgN_Wt4yv9k0Q0Idrj8x4dWJIqxytXjlKquaEEslsORj30qxITwMpRYK8LG5ei04TvGFlgieuXHadSs0reNoUvvjO_o4c⟩",
-    "SKYNET_TUNNEL_TOKEN": {
-      "label": "SKYNET_TUNNEL_TOKEN",
+    "SKYNET_TUNNEL_SECRET": {
+      "label": "SKYNET_TUNNEL_SECRET",
       "version": 1,
-      "salt": "8bbe0b4b4393c6a2a91d42df718da8ba25b59f61c4a858aa9ead2776c7ca88e6",
-      "iv": "c0895681280edfe528ec98e17eb798a9",
-      "tag": "162de2e1f12e31caf4e633d0471633f8",
-      "ciphertext": "da7d943af729fb11fbea5e3df1123ea8c36e10fa35b2f48770e8ed8b191e20a36c66246d6fa2e615177d36d978ff614d0c658f4b7031ca9fb9aa925de370291158541846c64808f72f66b3784753bb142b31568bfe2d6bc22b7d4e87d0d965751dcdf470188ff090cdd019f5cf9538504775260d9e968ecd9cffa114785afe759580d2065a811568f44191181d033096701bf5156509e78b3078ab7c4ec3deb09dd343fc0c6ae64e27f5baca6d829a5892d29cea9e5c1db0d7adbb41407148daadf6375ab4cf474538a73314a523886a9197b8e83dd121c2ad714c3ba5ae4aba6c8d722e113d46dbf9ec94880abeeef2",
+      "salt": "e48a3a9cad2afe7e05eb1900258ea3bb89199b559e84b47b38c86afd217b3c79",
+      "iv": "4a3f9827d903c74dcae10c8a53b407eb",
+      "tag": "a793ba06c3113fdcc5904ec8765ab978",
+      "ciphertext": "88a35054f8a2b576c95e2085544b3a2ba86610c6eea323aaf6bbd95b70af3f11e1ea0b4cae874cbb0179374f5c298fac77b3e167c107f4341dc04a3da96a57da7b097f2b99c5ac5f89664f086f03b48ab8e659f5c71bdb07",
       "kdf": {
         "algo": "pbkdf2-sha512",
         "iterations": 210000,
         "keylen": 32
       }
-    }
+    },
+    "SKYNET_TUNNEL_TOKEN": "P⟨jZQfFxxlvlpz1Kk9BnT3F0i7gli7nDTbKv3SyWcRTXPTg0OEbOKnfZrcRX9p7TcYWP0aKwOdcWpWRTfH9wnbw5hzsQJ4cN6DItj6Y7_q7hibr7FNyUkn-PS_5as6S1Gfjs3oYQr6iPSYNnDKQ8xhZPNzMQ8jMD7iWNkH3mdhjGvDXYL_fzVvE_hJYBqWhfYzh-dQeppA-Py0TmNj0LQJWRfZKNizMdM7BUasVNB1Gr875ddveLW32KLIYgZ5WlteRKWDUMb1gwt2HHjzYipPuxgfDYhMLIAweMw7YMXw_U80d2L_dlrSFFQkW6n69LI25SWXcxUJfhXazJ3kVGv7v1WH8-r2VX3NIs6bmw⟩"
   },
   "_updated": "2026-06-22T23:00:32Z"
 }
