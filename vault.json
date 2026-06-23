@@ -60,20 +60,20 @@
         "keylen": 32
       }
     },
-    "SKYNET_TUNNEL_ID": "P⟨sywDKNzUBUSXiaVsrd0d5COgrYZ3VDJa633VKI4nGRHAxcqj-Zp4w7_GR7yFM395aPOXKpPDDAHDTGDn5eAh3A⟩",
-    "SKYNET_TUNNEL_SECRET": {
-      "label": "SKYNET_TUNNEL_SECRET",
+    "SKYNET_TUNNEL_ID": {
+      "label": "SKYNET_TUNNEL_ID",
       "version": 1,
-      "salt": "e48a3a9cad2afe7e05eb1900258ea3bb89199b559e84b47b38c86afd217b3c79",
-      "iv": "4a3f9827d903c74dcae10c8a53b407eb",
-      "tag": "a793ba06c3113fdcc5904ec8765ab978",
-      "ciphertext": "88a35054f8a2b576c95e2085544b3a2ba86610c6eea323aaf6bbd95b70af3f11e1ea0b4cae874cbb0179374f5c298fac77b3e167c107f4341dc04a3da96a57da7b097f2b99c5ac5f89664f086f03b48ab8e659f5c71bdb07",
+      "salt": "b829de315a45bc88419e479aec7df6f3864b933be4c8621b04406337bb924df8",
+      "iv": "cf1a5c15ee7ec751acd848559c0d8efd",
+      "tag": "417d31ced090147f2f9bc51e40e66d86",
+      "ciphertext": "c1a1be10270a320e057621bcfd9baa40aadcac31c0f753646b50f4b21c35b41eb05ffdd6",
       "kdf": {
         "algo": "pbkdf2-sha512",
         "iterations": 210000,
         "keylen": 32
       }
     },
+    "SKYNET_TUNNEL_SECRET": "P⟨2FHHheMQ6j3UOx8ytj6XnVsqyI68174RAnmdL6USVvyGw1iS_AJ_jlrMOa_koXDgN_Wt4yv9k0Q0Idrj8x4dWJIqxytXjlKquaEEslsORj30qxITwMpRYK8LG5ei04TvGFlgieuXHadSs0reNoUvvjO_o4c⟩",
     "SKYNET_TUNNEL_TOKEN": {
       "label": "SKYNET_TUNNEL_TOKEN",
       "version": 1,
