@@ -146,3 +146,34 @@ File.WriteAllText(Path.Combine(outDir, "phase1-results.json"),
     JsonSerializer.Serialize(outJson, new JsonSerializerOptions { WriteIndented = true }));
 Console.WriteLine($"\nWritten: {Path.Combine(outDir, "phase1-results.json")}");
 if (totalFail > 0) Environment.Exit(1);
+
+// ── Phase 2: Witness chain ────────────────────────────────────────────────────
+// Each PASS result becomes an anchor: SHA-256(assertion + result) = witness hash
+// Independently verifiable from the artifacts alone — no execution introspection
+
+using System.Security.Cryptography;
+
+var witnesses = new List<object>();
+foreach (var entry in results)
+{
+    var d  = (dynamic)entry;
+    var payload = $"{d.label}:{d.pass}:{d.message}";
+    var hash    = "sha256:" + Convert.ToHexString(
+        SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+    witnesses.Add(new { label = (string)d.label, pass = (bool)d.pass,
+                        message = (string)d.message, anchor = hash });
+}
+
+var witnessChain = new
+{
+    schema       = "witness-chain-v1",
+    rfc          = "RFC-TEMIN-W4-FORMAL-PROOF-001 / Part B Phase 2",
+    generated_at = DateTime.UtcNow.ToString("o"),
+    total_pass   = totalPass,
+    total_fail   = totalFail,
+    witnesses,
+};
+var wcPath = Path.Combine(outDir, "witness-chain.json");
+File.WriteAllText(wcPath, JsonSerializer.Serialize(witnessChain,
+    new JsonSerializerOptions { WriteIndented = true }));
+Console.WriteLine($"\nWritten: {wcPath}  ({witnesses.Count} witnesses)");
