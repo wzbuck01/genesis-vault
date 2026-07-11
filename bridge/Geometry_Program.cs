@@ -10,7 +10,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
-using Genesis.Geometry;
 
 var outDir = args.Length > 0 ? args[0] : ".";
 var results = new List<object>();
