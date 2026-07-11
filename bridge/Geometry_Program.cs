@@ -5,6 +5,7 @@ using HiveMind.Geometry;
 // (c) 2026 Brandon Clark / Genesis Systems
 
 using System;
+using System.Security.Cryptography;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -150,8 +151,6 @@ if (totalFail > 0) Environment.Exit(1);
 // ── Phase 2: Witness chain ────────────────────────────────────────────────────
 // Each PASS result becomes an anchor: SHA-256(assertion + result) = witness hash
 // Independently verifiable from the artifacts alone — no execution introspection
-
-using System.Security.Cryptography;
 
 var witnesses = new List<object>();
 foreach (var entry in results)
