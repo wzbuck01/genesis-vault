@@ -7,7 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace Genesis.Geometry;
+namespace HiveMind.Geometry;
 
 /// <summary>
 /// Extended binary Golay code C24 = [24, 12, 8]₂
