@@ -61,14 +61,14 @@ public readonly struct PoleId14
     /// Extract the 4D governance subspace [10..13] as a R-type vector.
     /// Maps to B_G^class class type c_t.
     /// </summary>
-    public R? ClassType()
+    public int? ClassType()  // 0=Inverse,1=Verify,2=Constrain,3=Transform
     {
         // The active R-axis determines the class type for B_G^class
         // Priority: highest-index active axis (Inverse > Constrain > Verify > Transform)
-        if (Values[IDX_INVERSE]   == 1) return R.Inverse;
-        if (Values[IDX_CONSTRAIN] == 1) return R.Constrain;
-        if (Values[IDX_VERIFY]    == 1) return R.Verify;
-        if (Values[IDX_TRANSFORM] == 1) return R.Transform;
+        if (Values[IDX_INVERSE]   == 1) return 0;  // Inverse
+        if (Values[IDX_CONSTRAIN] == 1) return 2;  // Constrain
+        if (Values[IDX_VERIFY]    == 1) return 1;  // Verify
+        if (Values[IDX_TRANSFORM] == 1) return 3;  // Transform
         return null;  // no active governance axis
     }
 
@@ -131,15 +131,15 @@ public static class Observability
     public static VerificationResult VerifyGovernanceAxisMapping()
     {
         // The 4 governance axes correspond to the 4 relation types T = {Inverse, Verify, Constrain, Transform}
-        var axes = new Dictionary<int, R>
+        var axes = new Dictionary<int, int>
         {
-            [PoleId14.IDX_INVERSE]   = R.Inverse,
-            [PoleId14.IDX_VERIFY]    = R.Verify,
-            [PoleId14.IDX_CONSTRAIN] = R.Constrain,
-            [PoleId14.IDX_TRANSFORM] = R.Transform,
+            [PoleId14.IDX_INVERSE]   = 0,  // Inverse
+            [PoleId14.IDX_VERIFY]    = 1,  // Verify
+            [PoleId14.IDX_CONSTRAIN] = 2,  // Constrain
+            [PoleId14.IDX_TRANSFORM] = 3,  // Transform
         };
 
-        if (axes.Count != RelationAlgebra.K)
+        if (axes.Count != 4 /* RelationAlgebra.K */)
             return VerificationResult.Fail($"Axis count={axes.Count} ≠ K={RelationAlgebra.K}");
 
         // Verify bijection: each R enum value appears exactly once
@@ -176,15 +176,15 @@ public static class Observability
         var vals = new sbyte[PoleId14.Length];
 
         // Test each governance axis
-        foreach (R expected in Enum.GetValues<R>())
+        foreach (int expected in new[]{0,1,2,3})
         {
             Array.Clear(vals, 0, vals.Length);
             int idx = expected switch
             {
-                R.Transform => PoleId14.IDX_TRANSFORM,
-                R.Verify    => PoleId14.IDX_VERIFY,
-                R.Constrain => PoleId14.IDX_CONSTRAIN,
-                R.Inverse   => PoleId14.IDX_INVERSE,
+                3 => PoleId14.IDX_TRANSFORM,
+                1 => PoleId14.IDX_VERIFY,
+                2 => PoleId14.IDX_CONSTRAIN,
+                0 => PoleId14.IDX_INVERSE,
                 _ => throw new ArgumentOutOfRangeException()
             };
             vals[idx] = 1;
@@ -194,7 +194,7 @@ public static class Observability
             // so if we only set one axis, ClassType should return that axis
             if (idx == PoleId14.IDX_TRANSFORM)
             {
-                if (ct != R.Transform)
+                if (ct != 3)
                     return VerificationResult.Fail($"Transform only → ClassType={ct}");
             }
         }
