@@ -1,3 +1,4 @@
+using HiveMind.Geometry;
 // Program.cs — HiveMind.Geometry Phase 0+1
 // Phase 0: RFC-007C saturation, B_G^class seed, commutation tests, latency
 // Phase 1: W4, K5, A4, Golay, Leech24, Observability verification
