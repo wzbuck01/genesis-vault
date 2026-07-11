@@ -7,8 +7,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using HiveMind.Geometry;
 
-namespace Genesis.Geometry;
+namespace HiveMind.Geometry;
 
 /// <summary>
 /// 14-dimensional poleId coordinate space (RFC-HB-006).
