@@ -47,7 +47,7 @@ foreach (int dh in new[] { 64, 256 }) {
     }) {
         Console.WriteLine($"    {r}");
         if (r.Passes) totalPass++; else totalFail++;
-        results.Add(new { label=$"CommutationTest_dh{dh}", pass=r.Passes, message=r.Message });
+        results.Add(new { label=$"CommutationTest_dh{dh}", pass=r.Passes, message=r.ToString() });
     }
 }
 
