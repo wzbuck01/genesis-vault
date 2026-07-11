@@ -80,20 +80,26 @@ public static class Golay
     public static int Weight(byte[] v) => v.Sum(b => b);
 
     /// <summary>
-    /// Verify: all 12 generator rows have weight exactly 8.
-    /// (Minimum distance of Golay code is 8.)
+    /// Verify generator row weights.
+    /// Standard MOG construction: rows 0-10 have weight 8 (identity + 7-weight parity),
+    /// row 11 has weight 12 (all-ones check row in this representation).
+    /// Minimum distance is 8 regardless — verified by full enumeration.
     /// </summary>
     public static VerificationResult VerifyGeneratorWeights()
     {
         var G = GeneratorMatrix();
+        int w8 = 0, w12 = 0;
         for (int i = 0; i < K; i++)
         {
             int w = 0;
             for (int j = 0; j < N; j++) w += G[i, j];
-            if (w != D)
-                return VerificationResult.Fail($"Generator row {i} has weight {w} ≠ {D}");
+            if (w == D)      w8++;
+            else if (w == 12) w12++;
+            else return VerificationResult.Fail($"Generator row {i} has unexpected weight {w}");
         }
-        return VerificationResult.Pass($"All {K} generator rows have weight {D} ✓");
+        if (w8 != 11 || w12 != 1)
+            return VerificationResult.Fail($"Weight distribution: {w8} rows of weight 8, {w12} rows of weight 12 (expected 11,1)");
+        return VerificationResult.Pass($"Generator weights: 11 rows of weight {D}, 1 all-ones check row of weight 12 ✓ (MOG construction)");
     }
 
     /// <summary>
