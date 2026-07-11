@@ -8,7 +8,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace Genesis.Geometry;
+namespace HiveMind.Geometry;
 
 // ── W4: Walsh-Hadamard basis ───────────────────────────────────────────────────
 // Rows = four irreducible characters of Z2×Z2, indexed P0..P3
