@@ -7,7 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace Genesis.Geometry;
+namespace HiveMind.Geometry;
 
 /// <summary>
 /// A4 root system — C(5,2) = 10 positive roots.
