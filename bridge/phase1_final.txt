@@ -1,0 +1,147 @@
+
+                                                           =
+  Phase 0 - RFC-007C Relation Algebra
+============================================================
+RFC-007C/D Relation Algebra - B_G^class Seed Table
+K = 4, T = {Inverse, Verify, Constrain, Transform}
+|E0| = 9  |E*| = 16
+
+E* (saturated admissible pairs):
+  (Inverse, Inverse)
+  (Inverse, Verify)
+  (Inverse, Constrain)
+  (Inverse, Transform)
+  (Verify, Inverse)
+  (Verify, Verify)
+  (Verify, Constrain)
+  (Verify, Transform)
+  (Constrain, Inverse)
+  (Constrain, Verify)
+  (Constrain, Constrain)
+  (Constrain, Transform)
+  (Transform, Inverse)
+  (Transform, Verify)
+  (Transform, Constrain)
+  (Transform, Transform)
+
+B_G^class initial weights (row=src, col=dst):
+               Inverse      Verify   Constrain   Transform
+   Inverse         1.0         1.0         1.0         1.0
+    Verify         1.0         1.0         1.0         1.0
+ Constrain         1.0         1.0         1.0         1.0
+ Transform         1.0         1.0         1.0         1.0
+
+Hard-masked terms (NOT in table, applied unconditionally):
+  B_G^authority: block if dst_stratum > src_stratum (Theorem 3)
+  B_G^receipt:   block if receipt not yet emitted (Theorem 4)
+
+
+                                                           =
+  Phase 0 - RoPE Commutation Tests (Part B 13.4)
+============================================================
+
+  d_h = 64:
+    [PASS] Option 3 (WholePlaneGating)
+       tested=1000  max_error=1.192E-007  tolerance=1.0E-005 
+    [PASS] Option 2 (BlockDiagonal, scaled-identity init)
+       tested=1000  max_error=1.192E-007  tolerance=1.0E-005 
+    [PASS] Negative control (arbitrary matrix, should NOT commute)
+       tested=20  max_error=1.341E+000  tolerance=1.0E-005 (non-commutation confirmed)
+
+  d_h = 256:
+    [PASS] Option 3 (WholePlaneGating)
+       tested=1000  max_error=1.788E-007  tolerance=1.0E-005 
+    [PASS] Option 2 (BlockDiagonal, scaled-identity init)
+       tested=1000  max_error=1.788E-007  tolerance=1.0E-005 
+    [PASS] Negative control (arbitrary matrix, should NOT commute)
+       tested=20  max_error=3.108E+000  tolerance=1.0E-005 (non-commutation confirmed)
+
+                                                           =
+  Phase 0 - Latency Benchmark (Option 3, d_h=256)
+============================================================
+  Rotate-only:     4050.6 ns/token
+  Gate+Rotate:     4426.9 ns/token
+  Overhead:         376.2 ns/token (9.3%)
+
+                                                           =
+  Phase 1 - W4 (Walsh-Hadamard basis)
+============================================================
+
+[W4]
+  [PASS] W4xW4? = 4I û
+  [PASS] All row pairs orthogonal - Z2xZ2 characters û
+  [PASS] Each basis row self-identifies as its own mode û
+
+                                                           =
+  Phase 1 - K5 (complete graph, S5 action)
+============================================================
+
+[K5]
+  [PASS] |E(K5)| = 10 û
+  [PASS] S5 acts faithfully on K5 - |S5|=120, |K5|=10 û
+
+                                                           =
+  Phase 1 - A4 (root system, W(A4)=S5, T10 receipt root)
+============================================================
+
+[A4]
+  [PASS] |A4?| = 10 û  (C(5,2) = 10)
+  [PASS] Height distribution h:{4,3,2,1} û
+  [PASS] T10=(0,4) is unique maximum-height (receipt) root û
+  [PASS] Z2 reversal: fixes T10, preserves heights, involutory, fixes 2/10 roots û
+  [PASS] W(A4) = S5, |W(A4)| = 120, faithful action on 10 positive roots û
+
+                                                           =
+  Phase 1 - Golay [24,12,8] (extended binary code)
+============================================================
+
+[Golay]
+  [PASS] Generator weights: 11 rows of weight 8, 1 all-ones check row of weight 12 û (MOG construction)
+  [PASS] C24 is self-dual: GxG? = 0 (mod 2) û
+  [PASS] Minimum distance d(C24) = 8 ò 8 û  (checked all 2^12-1 non-zero codewords)
+
+                                                           =
+  Phase 1 - Leech lattice ?24 (Construction B seed)
+============================================================
+
+[Leech24]
+  [PASS] Seed vector normý = 96 û (weight-8 Golay codeword in {ñ2} encoding)
+  [PASS] Golay [24,12,8] forces ?24 ? R^24: dimension match û
+  [PASS] ?24: dim=24, min_norm=4, kissing=196560 - even unimodular, unique in dim 24, no vectors of norm 2 û
+
+                                                           =
+  Phase 1 - Observability algebra (poleId14, 14-dimensional space)
+============================================================
+
+[Observability]
+  [PASS] dim(poleId14) = 10+4 = 14 û
+  [PASS] Governance axes [10-13]  RFC-007C T={Inverse,Verify,Constrain,Transform} bijection û
+  [PASS] Zero poleId  W4 mode P0 (ground state) û
+  [PASS] ClassType() correctly extracts active governance axis û
+
+                                                           =
+  SUMMARY
+============================================================
+  PASS: 26   FAIL: 0
+  ALL PASS û
+
+Forcing chain (RFC-TEMIN-W4-FORMAL-PROOF-001):
+
+  TEMIN completeness
+       forces K=4 relation types (RFC-007D Theorem 2.2)
+  T = {Inverse, Verify, Constrain, Transform}
+       W4 Hadamard rows = characters of Z2xZ2 (FORMAL-PROOF 1.2)
+  W4 basis [P0..P3]
+       modes  K5 nodes (K=5 from minimality, RFC-007D 3)
+  K5 (complete graph, 5 nodes)
+       W(A4) = S5 acts on K5 (Weyl group)
+  A4 root system (10 positive roots, T10=(0,4) receipt root)
+       A4 seeds Golay via Construction A/B (GUT paper)
+  Golay [24,12,8] (min weight 8, self-dual)
+       Golay seeds Leech via Construction B/D (GUT paper)
+  ?24 (densest packing, dim=24, min norm=4)
+       observability algebra embeds in 14D subspace
+  poleId14 (T1-T10 operational, R:Transform/Verify/Constrain/Inverse governance)
+
+Written: C:\share\seed\state\phase1-results.json
+DONE 
