@@ -61,7 +61,7 @@
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 
-#define VAULT_URL_PUBLIC  "https://raw.githubusercontent.com/wzbuck01/genesis-vault/main/vault.json"
+#define VAULT_URL_PUBLIC  "https://api.github.com/repos/wzbuck01/genesis-vault/contents/vault.json"
 #define VAULT_URL_MONO    "https://api.github.com/repos/wzbuck01/genesis-monorepo/contents/vault/vault.json"
 #define VAULT_URL_ESB     "https://api.github.com/repos/Prime-Velocity/exponential-session-bootstrap/contents/vault/vault.json"
 
@@ -145,6 +145,13 @@ static int https_get(const char *url, const char *token,
             "-H 'User-Agent: genesis/vault-decrypt' "
             "-w '\\n%%{http_code}' '%s' 2>/dev/null",
             token, url);
+    } else if (accept && accept[0]) {
+        n = snprintf(cmd, sizeof(cmd),
+            "curl -s --noproxy '*' --max-time 30 "
+            "-H 'Accept: %s' "
+            "-H 'User-Agent: genesis/vault-decrypt' "
+            "-w '\\n%%{http_code}' '%s' 2>/dev/null",
+            accept, url);
     } else {
         n = snprintf(cmd, sizeof(cmd),
             "curl -s --noproxy '*' --max-time 30 "
@@ -423,7 +430,7 @@ static int load_vault(const char *passphrase) {
 
     /* Tier 1: public genesis-vault — no token, always first */
     fprintf(stderr, "[vault-decrypt] trying public vault...\n");
-    ok = (https_get(VAULT_URL_PUBLIC, NULL, NULL, &buf) == 0);
+    ok = (https_get(VAULT_URL_PUBLIC, NULL, "application/vnd.github.raw+json", &buf) == 0);
 
     /* Tier 2: monorepo via ZAC */
     if (!ok && zac && zac[0]) {
@@ -596,7 +603,7 @@ static char *json_patch_entry(const char *json, const char *key, const char *tok
             ve++;
         }
         /* Copy: before opening ", insert new token, copy rest */
-        size_t pre = (size_t)((vs - 1) - json);  /* up to and incl the " */
+        size_t pre = (size_t)(vs - json);        /* up to and INCLUDING the opening " */
         memcpy(out, json, pre);
         size_t oi = pre;
         oi += (size_t)sprintf(out + oi, "%s", token);
@@ -811,7 +818,7 @@ static int vault_set_all(const char *passphrase, const char *key, const char *va
     if (!loaded || !strstr(raw.data, "entries")) {
         /* Fall back to public vault */
         raw.len = 0;
-        loaded = (https_get(VAULT_URL_PUBLIC, NULL, NULL, &raw) == 0);
+        loaded = (https_get(VAULT_URL_PUBLIC, NULL, "application/vnd.github.raw+json", &raw) == 0);
     }
     if (!loaded) {
         fprintf(stderr, "[vault-set] could not load vault\n");
