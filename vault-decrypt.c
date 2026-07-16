@@ -51,6 +51,7 @@
 #include "sha512.h"
 #include "aes256gcm.h"
 #include "genesis_secure.h"
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <unistd.h>
@@ -311,67 +312,56 @@ static int decrypt_entry(const char *passphrase, const char *label,
  */
 static int walk_vault(const char *src, const char *passphrase) {
     static char plain[MAX_VAL + 1];
-    const char *p = src;
     int count = 0;
 
-    while (*p && g_count < MAX_ENTRIES) {
-        if (*p != '"') { p++; continue; }
-        p++;
-        const char *ks = p;
-        while (*p && *p != '"') p++;
-        size_t kl = (size_t)(p - ks);
-        if (!*p || kl == 0 || kl >= MAX_KEY) { if (*p) p++; continue; }
-        char key[MAX_KEY]; memcpy(key, ks, kl); key[kl] = '\0';
-        p++;
-        while (*p && *p != ':' && *p != '"' && *p != '}') p++;
-        if (*p != ':') continue;
-        p++;
-        while (*p == ' ') p++;
-        if (*p != '"') continue;
-        p++;
-
-        /* Detect sealed token: P⟨ (UTF-8) or P\u27e8 (JSON-escaped) */
-        int sealed = 0;
-        if (p[0] == 'P' && (unsigned char)p[1] == 0xE2 &&
-            (unsigned char)p[2] == 0x9F && (unsigned char)p[3] == 0xA8)
-            sealed = 1;
-        else if (p[0] == 'P' && p[1] == '\\' && p[2] == 'u' &&
-                 p[3] == '2' && p[4] == '7' && p[5] == 'e' && p[6] == '8')
-            sealed = 1;
-
-        if (sealed) {
-            const char *tok_start = p;
-            const char *scan = p;
-            while (*scan && *scan != '"') scan++;
-            size_t tok_len = (size_t)(scan - tok_start);
-
-            char *tokbuf = malloc(tok_len + 1);
-            if (tokbuf) {
-                memcpy(tokbuf, tok_start, tok_len); tokbuf[tok_len] = '\0';
-                size_t pl = 0;
-                if (decrypt_entry(passphrase, key, tokbuf, plain, &pl) == 0
-                    && pl > 0 && g_count < MAX_ENTRIES) {
-                    char *v = malloc(pl + 1);
-                    if (v) {
-                        memcpy(v, plain, pl + 1);
-                        memcpy(g_entries[g_count].key, key, kl + 1);
-                        g_entries[g_count].val = v;
-                        g_count++;
-                        count++;
-                        if (g_count == MAX_ENTRIES_WARN)
-                            fprintf(stderr, "[vault-decrypt] WARNING: %d entries loaded"
-                                    " — approaching limit of %d; consider bumping MAX_ENTRIES\n",
-                                    g_count, MAX_ENTRIES);
-                    }
-                }
-                free(tokbuf);
-            }
-            p = scan;
-        }
-
-        while (*p && *p != '"') p++;
-        if (*p) p++;
+    cJSON *root = cJSON_Parse(src);
+    if (!root) {
+        const char *ep = cJSON_GetErrorPtr();
+        fprintf(stderr, "[vault-decrypt] JSON parse failed near: %.40s\n",
+                ep ? ep : "(unknown)");
+        return 0;
     }
+    cJSON *entries = cJSON_GetObjectItemCaseSensitive(root, "entries");
+    if (!entries || !cJSON_IsObject(entries)) {
+        fprintf(stderr, "[vault-decrypt] no 'entries' object in vault JSON\n");
+        cJSON_Delete(root);
+        return 0;
+    }
+
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, entries) {
+        if (g_count >= MAX_ENTRIES) break;
+        if (!cJSON_IsString(item) || !item->valuestring || !item->string) continue;
+
+        const char *key = item->string;
+        const char *val = item->valuestring;
+        size_t kl = strlen(key);
+        if (kl == 0 || kl >= MAX_KEY) continue;
+
+        /* Detect sealed token: P⟨ prefix. cJSON has already decoded any
+         * \u escapes, so only the literal UTF-8 form needs checking. */
+        if (!(val[0] == 'P' && (unsigned char)val[1] == 0xE2 &&
+              (unsigned char)val[2] == 0x9F && (unsigned char)val[3] == 0xA8))
+            continue;  /* not a sealed entry (e.g. plain metadata) — skip */
+
+        size_t pl = 0;
+        if (decrypt_entry(passphrase, key, val, plain, &pl) == 0 && pl > 0) {
+            char *v = malloc(pl + 1);
+            if (v) {
+                memcpy(v, plain, pl + 1);
+                memcpy(g_entries[g_count].key, key, kl + 1);
+                g_entries[g_count].val = v;
+                g_count++;
+                count++;
+                if (g_count == MAX_ENTRIES_WARN)
+                    fprintf(stderr, "[vault-decrypt] WARNING: %d entries loaded"
+                            " — approaching limit of %d; consider bumping MAX_ENTRIES\n",
+                            g_count, MAX_ENTRIES);
+            }
+        }
+    }
+
+    cJSON_Delete(root);
     return count;
 }
 
@@ -579,63 +569,33 @@ static int vault_seal(const char *passphrase, const char *label,
 
 /* Updates or inserts entries["key"] = token in raw vault JSON.
  * Returns newly allocated string (caller must free), or NULL on error.
- * Simple string-level patch — vault format is controlled, not arbitrary JSON. */
+ * Uses cJSON for parse/serialize — output is always syntactically valid
+ * by construction, unlike the previous hand-rolled byte-offset patcher. */
 static char *json_patch_entry(const char *json, const char *key, const char *token) {
-    /* Build the search pattern: "KEY": "  */
-    char search[MAX_KEY + 8];
-    snprintf(search, sizeof(search), "\"%s\":", key);
+    cJSON *root = cJSON_Parse(json);
+    if (!root) return NULL;
 
-    char *out      = (char *)malloc(strlen(json) + strlen(token) + 256);
-    if (!out) return NULL;
+    cJSON *entries = cJSON_GetObjectItemCaseSensitive(root, "entries");
+    if (!entries || !cJSON_IsObject(entries)) { cJSON_Delete(root); return NULL; }
 
-    const char *found = strstr(json, search);
-    if (found) {
-        /* Key exists — replace token: skip to opening " of value, find closing " */
-        const char *vs = found + strlen(search);
-        while (*vs == ' ' || *vs == '\n' || *vs == '\r') vs++;
-        if (*vs != '"') { free(out); return NULL; }    /* unexpected format */
-        vs++;                                           /* past opening " */
-        const char *ve = vs;
-        /* Find end of P⟨...⟩ sealed token — scan to closing ⟩ then " */
-        while (*ve && *ve != '"') {
-            /* skip UTF-8 sequences */
-            if ((unsigned char)*ve >= 0x80) { ve++; continue; }
-            ve++;
+    cJSON *existing = cJSON_GetObjectItemCaseSensitive(entries, key);
+    if (existing) {
+        if (!cJSON_IsString(existing) || !cJSON_SetValuestring(existing, token)) {
+            /* Not a string, or in-place resize failed — replace the item outright */
+            cJSON *newstr = cJSON_CreateString(token);
+            if (!newstr) { cJSON_Delete(root); return NULL; }
+            if (!cJSON_ReplaceItemInObjectCaseSensitive(entries, key, newstr)) {
+                cJSON_Delete(newstr); cJSON_Delete(root); return NULL;
+            }
         }
-        /* Copy: before opening ", insert new token, copy rest */
-        size_t pre = (size_t)(vs - json);        /* up to and INCLUDING the opening " */
-        memcpy(out, json, pre);
-        size_t oi = pre;
-        oi += (size_t)sprintf(out + oi, "%s", token);
-        strcpy(out + oi, ve);
     } else {
-        /* Key not found — insert before closing } of "entries" */
-        const char *entries = strstr(json, "\"entries\"");
-        if (!entries) { free(out); return NULL; }
-        const char *brace = strchr(entries, '{');
-        if (!brace) { free(out); return NULL; }
-
-        /* Find the closing } of entries — scan forward counting braces */
-        const char *p = brace + 1;
-        int depth = 1;
-        while (*p && depth > 0) {
-            if (*p == '{') depth++;
-            else if (*p == '}') depth--;
-            if (depth > 0) p++;
-        }
-        /* p now points to the closing } of entries */
-        /* Find the last real entry before } to know if we need a comma */
-        const char *prev = p - 1;
-        while (prev > brace && (*prev == ' ' || *prev == '\n' || *prev == '\r')) prev--;
-        int need_comma = (*prev != '{');  /* empty entries block gets no comma */
-
-        size_t pre = (size_t)(p - json);
-        memcpy(out, json, pre);
-        size_t oi = pre;
-        if (need_comma) out[oi++] = ',';
-        oi += (size_t)sprintf(out + oi, "\n    \"%s\": \"%s\"", key, token);
-        strcpy(out + oi, p);
+        cJSON *newstr = cJSON_CreateString(token);
+        if (!newstr) { cJSON_Delete(root); return NULL; }
+        cJSON_AddItemToObject(entries, key, newstr);
     }
+
+    char *out = cJSON_Print(root);
+    cJSON_Delete(root);
     return out;
 }
 
@@ -647,27 +607,22 @@ static char *json_set_updated(const char *json) {
     char ts[32];
     strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", utc);
 
-    const char *tag = "\"_updated\":";
-    const char *found = strstr(json, tag);
-    if (!found) return strdup(json);    /* no _updated field, leave as-is */
+    cJSON *root = cJSON_Parse(json);
+    if (!root) return strdup(json);   /* leave as-is if unparseable */
 
-    /* Find the value string */
-    const char *vs = found + strlen(tag);
-    while (*vs == ' ') vs++;
-    if (*vs != '"') return strdup(json);
-    vs++;
-    const char *ve = strchr(vs, '"');
-    if (!ve) return strdup(json);
+    cJSON *updated = cJSON_GetObjectItemCaseSensitive(root, "_updated");
+    if (updated && cJSON_IsString(updated)) {
+        cJSON_SetValuestring(updated, ts);
+    } else if (updated) {
+        cJSON *newstr = cJSON_CreateString(ts);
+        if (newstr) cJSON_ReplaceItemInObjectCaseSensitive(root, "_updated", newstr);
+    } else {
+        cJSON_AddStringToObject(root, "_updated", ts);
+    }
 
-    size_t outlen = strlen(json) + 32;
-    char *out = (char *)malloc(outlen);
-    if (!out) return NULL;
-    size_t pre = (size_t)(vs - json);
-    memcpy(out, json, pre);
-    size_t oi = pre;
-    oi += (size_t)sprintf(out + oi, "%s", ts);
-    strcpy(out + oi, ve);
-    return out;
+    char *out = cJSON_Print(root);
+    cJSON_Delete(root);
+    return out ? out : strdup(json);
 }
 
 /* ── GitHub Contents API PUT ─────────────────────────────────────────────── */
@@ -786,7 +741,14 @@ static int vault_set_all(const char *passphrase, const char *key, const char *va
             if (cp) {
                 cp += strlen(ctag);
                 while (*cp == ' ' || *cp == '"') cp++;
-                /* Decode base64 (standard, with \n) */
+                /* Decode base64. GitHub's Contents API line-wraps the base64
+                 * payload at 60 chars using the JSON escape sequence \n
+                 * (backslash + 'n', two literal characters — not a raw
+                 * newline byte, since this is a JSON string value). Both
+                 * characters of that escape must be skipped as a unit:
+                 * skipping only the backslash leaves 'n' behind, which is
+                 * itself a valid base64 letter and gets wrongly decoded as
+                 * data, corrupting the output at every line-wrap boundary. */
                 char *decoded = (char *)malloc(raw.len);
                 if (!decoded) { free(raw.data); return 1; }
                 size_t di = 0;
@@ -803,6 +765,15 @@ static int vault_set_all(const char *passphrase, const char *key, const char *va
                     ['=']=64 };
                 uint32_t acc = 0; int bits = 0;
                 for (const char *s = cp; *s && *s != '"'; s++) {
+                    if (*s == '\\' && *(s+1)) {
+                        /* JSON escape sequence — skip both characters as a
+                         * unit regardless of which escape it is (\n, \r,
+                         * \t, \\, etc. all only ever appear here as
+                         * whitespace-equivalent line-wrap artifacts in a
+                         * base64 stream, never as meaningful data). */
+                        s++;
+                        continue;
+                    }
                     int v = T64[(unsigned char)*s];
                     if (v < 0) continue;
                     if (v == 64) break;
