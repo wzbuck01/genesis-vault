@@ -62,7 +62,7 @@
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 
-#define VAULT_URL_PUBLIC  "https://api.github.com/repos/wzbuck01/genesis-vault/contents/vault.json"
+#define VAULT_URL_PUBLIC  "https://raw.githubusercontent.com/wzbuck01/genesis-vault/main/vault.json"
 #define VAULT_URL_MONO    "https://api.github.com/repos/wzbuck01/genesis-monorepo/contents/vault/vault.json"
 #define VAULT_URL_ESB     "https://api.github.com/repos/Prime-Velocity/exponential-session-bootstrap/contents/vault/vault.json"
 
@@ -420,7 +420,7 @@ static int load_vault(const char *passphrase) {
 
     /* Tier 1: public genesis-vault — no token, always first */
     fprintf(stderr, "[vault-decrypt] trying public vault...\n");
-    ok = (https_get(VAULT_URL_PUBLIC, NULL, "application/vnd.github.raw+json", &buf) == 0);
+    ok = (https_get(VAULT_URL_PUBLIC, NULL, NULL, &buf) == 0);
 
     /* Tier 2: monorepo via ZAC */
     if (!ok && zac && zac[0]) {
@@ -789,7 +789,7 @@ static int vault_set_all(const char *passphrase, const char *key, const char *va
     if (!loaded || !strstr(raw.data, "entries")) {
         /* Fall back to public vault */
         raw.len = 0;
-        loaded = (https_get(VAULT_URL_PUBLIC, NULL, "application/vnd.github.raw+json", &raw) == 0);
+        loaded = (https_get(VAULT_URL_PUBLIC, NULL, NULL, &raw) == 0);
     }
     if (!loaded) {
         fprintf(stderr, "[vault-set] could not load vault\n");
